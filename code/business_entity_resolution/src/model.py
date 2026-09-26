@@ -41,25 +41,36 @@ def feat_files(split: str) -> list:
     return sorted(glob.glob(os.path.join(WORK, f"feat_{split}_*.parquet")))
 
 
-def feature_names(split: str = "train") -> list:
-    cols = pl.read_parquet_schema(feat_files(split)[0])
-    return [c for c in cols if c not in ID_COLS]
+def feature_names(split: str = "train", extra: pl.DataFrame | None = None) -> list:
+    cols = list(pl.read_parquet_schema(feat_files(split)[0]))
+    if extra is not None:
+        cols += list(extra.columns)
+    return [c for c in dict.fromkeys(cols) if c not in ID_COLS]
 
 
-def load_training(truth: pl.DataFrame) -> pl.DataFrame:
+def _read(f: str, extra: pl.DataFrame | None, filt=None) -> pl.DataFrame:
+    d = pl.read_parquet(f)
+    if filt is not None:
+        d = d.filter(filt)
+    if extra is not None:
+        d = d.join(extra, on=ID_COLS, how="left")
+    return d
+
+
+def load_training(truth: pl.DataFrame, extra: pl.DataFrame | None = None) -> pl.DataFrame:
     parts = []
     tp = truth.select("a_idx", "b_idx").with_columns(pl.lit(1, pl.Int8).alias("y"))
     for f in feat_files("train"):
-        d = pl.read_parquet(f).filter(in_train_sample(pl.col("a_idx")))
+        d = _read(f, extra, in_train_sample(pl.col("a_idx")))
         d = d.join(tp, on=ID_COLS, how="left").with_columns(pl.col("y").fill_null(0))
         parts.append(d)
     return pl.concat(parts).with_columns(fold_of(pl.col("a_idx")).alias("fold"))
 
 
-def train_folds(tag: str = "m1") -> list:
+def train_folds(tag: str = "m1", extra: pl.DataFrame | None = None) -> list:
     truth = truth_pairs()
-    d = load_training(truth)
-    feats = feature_names()
+    d = load_training(truth, extra)
+    feats = feature_names("train", extra)
     print(f"[train] rows {d.height:,} pos {d['y'].sum():,} feats {len(feats)}", flush=True)
     models = []
     for k in range(N_FOLDS):
@@ -80,11 +91,11 @@ def train_folds(tag: str = "m1") -> list:
     return models
 
 
-def predict_oof(models: list, tag: str = "m1") -> pl.DataFrame:
-    feats = feature_names()
+def predict_oof(models: list, tag: str = "m1", extra: pl.DataFrame | None = None) -> pl.DataFrame:
+    feats = feature_names("train", extra)
     out = []
     for f in feat_files("train"):
-        d = pl.read_parquet(f).with_columns(fold_of(pl.col("a_idx")).alias("fold"))
+        d = _read(f, extra).with_columns(fold_of(pl.col("a_idx")).alias("fold"))
         X = d.select(feats).to_numpy()
         fold = d["fold"].to_numpy()
         p = np.zeros(d.height, np.float32)
@@ -105,13 +116,13 @@ def predict_oof(models: list, tag: str = "m1") -> pl.DataFrame:
     return oof
 
 
-def predict_test(models: list, tag: str = "m1") -> pl.DataFrame:
-    feats = feature_names()
+def predict_test(models: list, tag: str = "m1", extra: pl.DataFrame | None = None) -> pl.DataFrame:
+    feats = feature_names("train", extra)
     with open(os.path.join(WORK, f"{tag}_iso.pkl"), "rb") as f:
         iso = pickle.load(f)
     out = []
     for f in feat_files("test"):
-        d = pl.read_parquet(f)
+        d = _read(f, extra)
         X = d.select(feats).to_numpy()
         p = np.mean([m.predict(X, num_iteration=m.best_iteration) for m in models], axis=0)
         out.append(d.select(ID_COLS).with_columns(pl.Series("p_raw", p.astype(np.float32))))

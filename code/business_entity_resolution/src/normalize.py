@@ -64,10 +64,10 @@ def normalize_names(df: pl.DataFrame, indic_map: dict | None = None) -> pl.DataF
     ).drop("g")
 
     def tokens(col: str) -> pl.Expr:
-        t = (pl.col(col).str.replace_all(r"'s\b", "s").str.replace_all(r"[^a-z0-9]+", " ")
+        t0 = (pl.col(col).str.replace_all(r"'s\b", "s").str.replace_all(r"[^a-z0-9]+", " ")
              .str.strip_chars().str.split(" ").list.eval(pl.element().filter(pl.element() != "")))
-        if indic_map:
-            t = _tok_map(t, indic_map)
+        # mined transliteration dictionary applies only to names that had native script
+        t = pl.when(pl.col("native")).then(_tok_map(t0, indic_map)).otherwise(t0) if indic_map else t0
         # digit/letter confusion on mixed tokens that are not ordinals (3rd, 4th ...)
         t = t.list.eval(
             pl.when(pl.element().str.contains(r"[a-z]") & pl.element().str.contains(r"[0-9]")

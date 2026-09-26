@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 import os
 import re
 from collections import Counter, defaultdict
@@ -16,6 +17,8 @@ from rapidfuzz.distance import JaroWinkler
 
 from io_utils import WORK, load_source, load_truth
 from normalize import normalize
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _SKEL = [("ph", "f"), ("x", "ks"), ("ck", "k"), ("c", "k"), ("q", "k"), ("w", "v"),
          ("z", "j"), ("y", "i"), ("sh", "s"), ("th", "t"), ("dh", "d"), ("bh", "b"),
@@ -88,7 +91,13 @@ def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20) ->
                  .join(freq1.rename({"c": "b", "f1": "fb"}), on="b", how="left")
                  .with_columns(pl.col("fa").fill_null(0), pl.col("fb").fill_null(0))
                  .filter(pl.col("fa") > pl.col("fb")))
-    alias = dict(zip(best["b"].to_list(), best["a"].to_list()))
+    alias = {}
+    for b_c, a_c, n, t, fa in best.select("b", "a", "len", "tot", "fa").iter_rows():
+        sim = JaroWinkler.normalized_similarity(skeleton(b_c.replace(" ", "")), skeleton(a_c.replace(" ", "")))
+        # spelling variant / transliteration of the same place, or a state-code style alias
+        # (same initial, very frequent canonical form, consistent replacement)
+        if sim >= 0.8 or (b_c[0] == a_c[0] and n >= 100 and n / t >= 0.6 and fa >= 2000):
+            alias[b_c] = a_c
     for k in list(alias):  # resolve chains a->b->c
         seen = {k}
         v = alias[k]

@@ -18,11 +18,15 @@ LEGAL_MAP = {
     "societe": "societe", "ste": "societe", "sté": "societe", "sarl": "sarl", "sas": "sas",
     "sasu": "sasu", "sa": "sa", "sci": "sci", "eurl": "eurl", "snc": "snc", "scp": "scp",
     "scop": "scop", "sca": "sca", "selarl": "selarl", "gie": "gie", "groupe": "group",
+    # same legal form, single-member variant (SASU = SAS unipersonnelle, EURL = SARL unipersonnelle)
+    "sasu": "sas", "eurl": "sarl", "cie": "company", "compagnie": "company", "ei": "ei",
+    # French name abbreviations
+    "frs": "freres", "ets": "etablissements",
 }
 LEGAL_TOKENS = {
     "private", "limited", "incorporated", "corporation", "company", "llc", "pllc", "llp", "plc",
     "lp", "pc", "opc", "huf", "public", "societe", "sarl", "sas", "sasu", "sa", "sci", "eurl",
-    "snc", "scp", "scop", "sca", "selarl", "gie",
+    "snc", "scp", "scop", "sca", "selarl", "gie", "ei",
 }
 # connector words that carry no identity
 NAME_STOP = {"and", "the", "of", "&", "de", "du", "des", "la", "le", "les", "et", "d", "l"}

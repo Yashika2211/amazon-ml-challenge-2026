@@ -25,7 +25,8 @@ from anyascii import anyascii
 from maps import ADDR_STOP, HONORIFIC, LEGAL_MAP, LEGAL_TOKENS, NAME_STOP, STREET_MAP
 
 NON_LATIN = r"[ऀ-෿]"  # Devanagari .. Sinhala (all Indic blocks)
-DBA_RE = r"^(.*?)\s+(?:d\s*\.?\s*b\s*\.?\s*a\.?|a\s*\.?\s*k\s*\.?\s*a\.?|t\s*/\s*a|trading as|doing business as)\s+(.+)$"
+DBA_RE = (r"^(.*?)\s+(?:d\s*[./]?\s*b\s*[./]?\s*a|a\s*[./]?\s*k\s*[./]?\s*a|f\s*[./]?\s*k\s*[./]?\s*a|t\s*/\s*a"
+          r"|trading as|doing business as|formerly known as|formerly|nee)\b\s*[.:]?\s*(.+)$")
 CONF_FROM = ["0", "1", "3", "4", "5", "8"]
 CONF_TO = ["o", "l", "e", "a", "s", "b"]
 
@@ -91,8 +92,8 @@ def normalize_names(df: pl.DataFrame, indic_map: dict | None = None) -> pl.DataF
     d = d.with_columns(
         pl.col("name_tok").list.eval(pl.element().filter(~pl.element().is_in(drop_core))).alias("core_tok"),
         pl.col("alt_all").list.eval(pl.element().filter(~pl.element().is_in(drop_core))).alias("alt_tok"),
-        pl.col("name_tok").list.eval(pl.element().filter(pl.element().is_in(list(LEGAL_TOKENS))))
-          .list.sort().list.join(" ").alias("legal"),
+        pl.concat_list("name_tok", "alt_all").list.eval(pl.element().filter(pl.element().is_in(list(LEGAL_TOKENS))))
+          .list.unique().list.sort().list.join(" ").alias("legal"),
     )
     # honorifics only at the start of the core ("shri", "m s")
     d = d.with_columns(

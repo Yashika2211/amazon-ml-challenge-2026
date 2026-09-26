@@ -47,6 +47,9 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
     if os.path.exists(path):
         z = np.load(path, allow_pickle=True)
         return {k: z[k] for k in z.files}
+    # name tokens for matching = core tokens plus the DBA / AKA / FKA alternate name
+    A = A.with_columns(pl.concat_list("core_tok", "alt_tok").list.unique(maintain_order=True).alias("core_tok"))
+    B = B.with_columns(pl.concat_list("core_tok", "alt_tok").list.unique(maintain_order=True).alias("core_tok"))
     both = pl.concat([A.with_columns(pl.lit(0).alias("side")), B.with_columns(pl.lit(1).alias("side"))], how="diagonal_relaxed")
     n_rec = both.height
     rec = {}

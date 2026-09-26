@@ -41,57 +41,70 @@ def feat_files(split: str) -> list:
     return sorted(glob.glob(os.path.join(WORK, f"feat_{split}_*.parquet")))
 
 
-def feature_names(split: str = "train", extra: pl.DataFrame | None = None) -> list:
+def feature_names(split: str = "train", extra=None) -> list:
     cols = list(pl.read_parquet_schema(feat_files(split)[0]))
     if extra is not None:
-        cols += list(extra.columns)
+        cols += list(pl.read_parquet_schema(extra)) if isinstance(extra, str) else list(extra.columns)
     return [c for c in dict.fromkeys(cols) if c not in ID_COLS]
 
 
-def _read(f: str, extra: pl.DataFrame | None, filt=None) -> pl.DataFrame:
+def _read(f: str, extra, filt=None) -> pl.DataFrame:
+    """Read one feature chunk; `extra` is a DataFrame or a parquet path joined on (a_idx, b_idx)."""
     d = pl.read_parquet(f)
     if filt is not None:
         d = d.filter(filt)
     if extra is not None:
-        d = d.join(extra, on=ID_COLS, how="left")
+        if isinstance(extra, str):
+            keys = d.select(ID_COLS).lazy()
+            ex = pl.scan_parquet(extra).join(keys, on=ID_COLS, how="semi").collect()
+        else:
+            ex = extra
+        d = d.join(ex, on=ID_COLS, how="left")
     return d
 
 
-def load_training(truth: pl.DataFrame, extra: pl.DataFrame | None = None) -> pl.DataFrame:
-    parts = []
-    tp = truth.select("a_idx", "b_idx").with_columns(pl.lit(1, pl.Int8).alias("y"))
-    for f in feat_files("train"):
-        d = _read(f, extra, in_train_sample(pl.col("a_idx")))
-        d = d.join(tp, on=ID_COLS, how="left").with_columns(pl.col("y").fill_null(0))
-        parts.append(d)
-    return pl.concat(parts).with_columns(fold_of(pl.col("a_idx")).alias("fold"))
-
-
-def train_folds(tag: str = "m1", extra: pl.DataFrame | None = None) -> list:
+def train_folds(tag: str = "m1", extra=None) -> list:
+    """Bin the sampled training rows once (lgb.Dataset) and train each fold on a subset."""
     truth = truth_pairs()
-    d = load_training(truth, extra)
+    tp = truth.select(ID_COLS).with_columns(pl.lit(1, pl.Int8).alias("y"))
     feats = feature_names("train", extra)
-    print(f"[train] rows {d.height:,} pos {d['y'].sum():,} feats {len(feats)}", flush=True)
+    files = feat_files("train")
+    sizes = [pl.scan_parquet(f).filter(in_train_sample(pl.col("a_idx"))).select(pl.len()).collect().item() for f in files]
+    n = sum(sizes)
+    X = np.empty((n, len(feats)), dtype=np.float32)
+    y = np.empty(n, dtype=np.float32)
+    fold = np.empty(n, dtype=np.int8)
+    o = 0
+    for f, m in zip(files, sizes):
+        d = _read(f, extra, in_train_sample(pl.col("a_idx")))
+        d = d.join(tp, on=ID_COLS, how="left").with_columns(pl.col("y").fill_null(0), fold_of(pl.col("a_idx")).alias("fold"))
+        X[o:o + m] = d.select(feats).to_numpy().astype(np.float32, copy=False)
+        y[o:o + m] = d["y"].to_numpy()
+        fold[o:o + m] = d["fold"].to_numpy()
+        o += m
+        del d
+    print(f"[train] rows {n:,} pos {int(y.sum()):,} feats {len(feats)}", flush=True)
+    full = lgb.Dataset(X, y, feature_name=feats, free_raw_data=True, params={"max_bin": PARAMS["max_bin"], "verbose": -1})
+    full.construct()
+    del X
     models = []
     for k in range(N_FOLDS):
         t = time.time()
-        tr, va = d.filter(pl.col("fold") != k), d.filter(pl.col("fold") == k)
-        dtr = lgb.Dataset(tr.select(feats).to_numpy(), tr["y"].to_numpy(), feature_name=feats, free_raw_data=True)
-        dva = lgb.Dataset(va.select(feats).to_numpy(), va["y"].to_numpy(), reference=dtr)
-        m = lgb.train(PARAMS, dtr, 3000, valid_sets=[dva],
+        dtr = full.subset(np.where(fold != k)[0])
+        dva = full.subset(np.where(fold == k)[0])
+        m = lgb.train(PARAMS, dtr, 4000, valid_sets=[dva],
                       callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])
         print(f"[train] fold {k}: best_iter {m.best_iteration} logloss {m.best_score['valid_0']['binary_logloss']:.5f} "
               f"{time.time() - t:.0f}s", flush=True)
         models.append(m)
-        del dtr, dva
     with open(os.path.join(WORK, f"{tag}_models.pkl"), "wb") as f:
         pickle.dump(models, f)
     imp = sorted(zip(feats, models[0].feature_importance("gain")), key=lambda x: -x[1])
-    print("[train] top features:", [(n, int(g)) for n, g in imp[:25]], flush=True)
+    print("[train] top features:", [(n_, int(g)) for n_, g in imp[:25]], flush=True)
     return models
 
 
-def predict_oof(models: list, tag: str = "m1", extra: pl.DataFrame | None = None) -> pl.DataFrame:
+def predict_oof(models: list, tag: str = "m1", extra=None) -> pl.DataFrame:
     feats = feature_names("train", extra)
     out = []
     for f in feat_files("train"):
@@ -116,7 +129,7 @@ def predict_oof(models: list, tag: str = "m1", extra: pl.DataFrame | None = None
     return oof
 
 
-def predict_test(models: list, tag: str = "m1", extra: pl.DataFrame | None = None) -> pl.DataFrame:
+def predict_test(models: list, tag: str = "m1", extra=None) -> pl.DataFrame:
     feats = feature_names("train", extra)
     with open(os.path.join(WORK, f"{tag}_iso.pkl"), "rb") as f:
         iso = pickle.load(f)

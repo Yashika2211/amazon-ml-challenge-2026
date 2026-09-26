@@ -72,7 +72,7 @@ def mine_indic(pos: pl.DataFrame, min_count: int = 3) -> dict:
     return out
 
 
-def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20) -> dict:
+def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20, region_rule: bool = False) -> dict:
     """Alias address components that systematically replace one another in positives."""
     short = lambda c: c.list.eval(pl.element().filter(
         ~pl.element().str.contains(r"[0-9]") & (pl.element().str.count_matches(" ") <= 2)))
@@ -99,6 +99,10 @@ def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20) ->
         # spelling variant / transliteration of the same place, or a state-code style alias
         code_like = min(len(b_c), len(a_c)) <= 3 and max(len(b_c.split()), len(a_c.split())) <= 2
         ok = sim >= 0.8 or (code_like and b_c[0] == a_c[0] and n >= 300 and n / t >= 0.6 and fa >= 2000)
+        # region-level synonym (e.g. departement vs region in the last address field): both sides are
+        # very frequent components and substitute each other consistently
+        if region_rule and n >= 1000 and n / t >= 0.6 and fa >= 0.01 * s1.height:
+            ok = True
         score = n * (0.5 + sim)
         if ok and score > best.get(b_c, (0, None))[0]:
             best[b_c] = (score, a_c)
@@ -141,6 +145,54 @@ def main() -> dict:
     top = sorted(generic.items(), key=lambda kv: -kv[1])[:40]
     print("generic", len(generic), top)
     maps = {"indic": indic, "comp_alias": comp, "generic": generic}
+    with open(os.path.join(WORK, "maps.json"), "w") as f:
+        json.dump(maps, f)
+    return maps
+
+
+def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50) -> dict:
+    """Alias / generic-token mining for countries with no training data, from test pseudo-positives.
+
+    Pseudo-positive: one-to-one best pair for a record with (p >= 0.9) or (address anchored:
+    same first house number, address token Jaccard >= 0.7, name overlap >= 0.5, rank 1 for the
+    record). Address anchoring keeps pairs whose names carry unseen noise words, so their
+    insertion rates are not biased away. No labels are used.
+    """
+    import glob
+    from prepare import load
+    A = load("test", "A").select(pl.col("idx").alias("a_idx"), "country", "core_tok", "addr_comp")
+    unseen = [c for c in A["country"].unique().to_list() if c not in maps["comp_alias"]]
+    if not unseen:
+        return maps
+    A = A.filter(pl.col("country").is_in(unseen))
+    B = load("test", "B").select(pl.col("idx").alias("b_idx"), "core_tok", "addr_comp")
+    pred = pl.read_parquet(pred_path, columns=["a_idx", "b_idx", "p"]).join(A.select("a_idx", "country"), on="a_idx")
+    cols = ["a_idx", "b_idx", "num_first_eq", "at_wjac", "nt_wov", "rank_b"]
+    feats = pl.concat([pl.read_parquet(f, columns=cols) for f in sorted(glob.glob(os.path.join(WORK, "feat_test_*.parquet")))])
+    d = pred.join(feats, on=["a_idx", "b_idx"], how="left")
+    d = d.filter((pl.col("p") >= 0.9) | ((pl.col("num_first_eq") == 1) & (pl.col("at_wjac") >= 0.7)
+                                          & (pl.col("nt_wov") >= 0.5) & (pl.col("rank_b") == 1)))
+    d = d.sort("p", descending=True).unique("b_idx", keep="first")
+    pos = (d.select("a_idx", "b_idx", pl.col("country").alias("a_country"))
+             .join(A.select("a_idx", pl.col("core_tok").alias("a_core_tok"), pl.col("addr_comp").alias("a_addr_comp")), on="a_idx")
+             .join(B.select("b_idx", pl.col("core_tok").alias("b_core_tok"), pl.col("addr_comp").alias("b_addr_comp")), on="b_idx"))
+    # only tokens that are rare in TRAIN may get a new generic rate, so US/India features stay
+    # exactly as the model saw them in training
+    tr_tok = (load("train", "B").select(pl.col("core_tok").explode().alias("t")).drop_nulls()
+                .group_by("t").len().filter(pl.col("len") >= min_occ)["t"])
+    common_in_train = set(tr_tok.to_list())
+    extra_generic = {}
+    for c in unseen:
+        pc = pos.filter(pl.col("a_country") == c)
+        s1c = A.filter(pl.col("country") == c)
+        maps["comp_alias"][c] = mine_components(pc, s1c, region_rule=True)
+        g = mine_generic(pc, None, min_occ)
+        extra_generic.update({k: v for k, v in g.items() if k not in maps["generic"] and k not in common_in_train})
+        print(f"[pseudo] {c}: {pc.height:,} pseudo-positives, aliases {maps['comp_alias'][c]}", flush=True)
+    top = sorted(extra_generic.items(), key=lambda kv: -kv[1])[:40]
+    print(f"[pseudo] new generic tokens {len(extra_generic)}: {top}", flush=True)
+    maps["generic"].update(extra_generic)
+    maps["pseudo_countries"] = unseen
     with open(os.path.join(WORK, "maps.json"), "w") as f:
         json.dump(maps, f)
     return maps

@@ -6,6 +6,7 @@ Stages: mine, prepare, blocker, train_data, test_data, fit, oof, test, stack, tu
   blocker       learned blocking ranker (LightGBM on raw key-matched pairs, 10% of train S1)
   fit/oof/test  round-1 LightGBM (tag m1): fold models, OOF on train, averaged test preds
   stack         round-2 (tag m2) on round-1 features + cluster features from m1 probabilities
+  pseudo        unseen countries (France): mine aliases + noise tokens from test pseudo-positives, redo test
   tune/submit   use m2 when stacking is on, else m1
 """
 from __future__ import annotations
@@ -26,7 +27,7 @@ import prepare
 import stack
 from io_utils import WORK
 
-STAGES = ["mine", "prepare", "blocker", "train_data", "test_data", "fit", "oof", "test", "stack", "tune", "submit"]
+STAGES = ["mine", "prepare", "blocker", "train_data", "test_data", "fit", "oof", "test", "stack", "pseudo", "tune", "submit"]
 
 
 def _load_models(tag):
@@ -72,13 +73,25 @@ def main() -> None:
     if "test" in todo:
         model.predict_test(_load_models("m1"), "m1")
     if "stack" in todo and not args.no_stack:
-        tr = pl.read_parquet(stack.build("train", "m1"))
+        tr = stack.build("train", "m1")
         m2 = model.train_folds("m2", tr)
         model.predict_oof(m2, "m2", tr)
-        del tr
-        te = pl.read_parquet(stack.build("test", "m1"))
-        model.predict_test(m2, "m2", te)
-        del te
+        model.predict_test(m2, "m2", stack.build("test", "m1"))
+    if "pseudo" in todo:
+        # countries without training data: mine aliases / noise tokens from test pseudo-positives,
+        # then redo test inference with the extended maps (models are unchanged)
+        maps = mine.load_maps()
+        before = set(maps["comp_alias"])
+        maps = mine.mine_pseudo(os.path.join(WORK, f"{final}_test.parquet"), maps)
+        if set(maps["comp_alias"]) != before:
+            prepare.prepare("test", maps)
+            p = os.path.join(WORK, "rec_test.npz")
+            if os.path.exists(p):
+                os.remove(p)
+            pipeline.run_split("test")
+            model.predict_test(_load_models("m1"), "m1")
+            if not args.no_stack:
+                model.predict_test(_load_models("m2"), "m2", stack.build("test", "m1"))
     cfg = None
     if "tune" in todo:
         oof = pl.read_parquet(os.path.join(WORK, f"{final}_oof.parquet"))

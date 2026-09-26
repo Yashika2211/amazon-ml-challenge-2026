@@ -68,6 +68,9 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
                                         .list.concat(pl.lit([0] * NN, dtype=pl.List(pl.UInt64))).list.head(NN)
                                         .list.to_array(NN))["addr_num"].to_numpy().astype(np.uint64))
         # count of S1 records sharing the exact core string -> "common name"
+    for side, df in (("A", A), ("B", B)):
+        rec[side + "_ch"] = df["compact"].hash().to_numpy()
+        rec[side + "_aempty"] = df["addr_empty"].to_numpy()
     cf = both.group_by("core").len()
     for side, df in (("A", A), ("B", B)):
         rec[side + "_corefreq"] = df.select("core").join(cf, on="core", how="left")["len"].to_numpy().astype(np.int32)

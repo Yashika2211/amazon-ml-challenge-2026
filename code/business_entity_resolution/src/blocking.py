@@ -68,10 +68,10 @@ def record_keys(df: pl.DataFrame, name_df: pl.DataFrame, addr_df: pl.DataFrame) 
     return out.select("idx", "kt", (pl.col("kt") + ":" + pl.col("key")).hash().alias("h"))
 
 
-def block_country(a: pl.DataFrame, b: pl.DataFrame, chunk: int = 40_000) -> pl.DataFrame:
+def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_000) -> pl.DataFrame:
     """Return (a_idx, b_idx, hit counts per key type, cheap score) for one country.
 
-    `a` must be sorted by idx (true for a country slice of the cache).
+    `rec` holds record arrays indexed by global idx (features.build_records).
     """
     t0 = time.time()
     name_df = _df_table(a.select(pl.concat_list("core_tok", "alt_tok").alias("x")),
@@ -97,9 +97,9 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, chunk: int = 40_000) -> pl.D
         sub = ka.filter(pl.col("idx").is_between(lo, hi)).rename({"idx": "a_idx"})
         pairs = sub.join(kb, on="h").group_by("a_idx", "b_idx").agg(
             *[(pl.col("kt") == kt).sum().cast(pl.UInt8).alias(f"k_{kt}") for kt in KEY_TYPES])
-        pairs = cheap_score(a, b, pairs)
-        # per-S1 pre-cut (generous) so the per-record ranking fits in memory
-        pairs = pairs.filter(pl.col("cheap").rank("ordinal", descending=True).over("a_idx") <= 200)
+        pairs = cheap_score(pairs, rec)
+        # per-S1 pre-cut (generous) so the global per-record ranking fits in memory
+        pairs = pairs.filter(pl.col("cheap").rank("ordinal", descending=True).over("a_idx") <= PRE_CUT)
         outs.append(pairs)
     res = pl.concat(outs)
     print(f"  pairs {res.height:,} in {time.time() - t0:.0f}s", flush=True)
@@ -107,44 +107,41 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, chunk: int = 40_000) -> pl.D
 
 
 # ---------------------------------------------------------------------------
-# cheap ranking + pruning
+# cheap ranking + pruning (numeric only: padded token-id arrays, no string conversion)
 # ---------------------------------------------------------------------------
-from rapidfuzz import fuzz, process  # noqa: E402
-
 K_A = 30
 K_B = 3
+PRE_CUT = 150
 
 
-def _sim(fn, x: pl.Series, y: pl.Series) -> np.ndarray:
-    return process.cpdist(x.to_list(), y.to_list(), scorer=fn, workers=-1, dtype=np.uint8)
+def _wov(a_ids: np.ndarray, b_ids: np.ndarray, idf: np.ndarray):
+    va, vb = a_ids >= 0, b_ids >= 0
+    wa = np.where(va, idf[np.maximum(a_ids, 0)], 0.0)
+    wb = np.where(vb, idf[np.maximum(b_ids, 0)], 0.0)
+    ma = ((a_ids[:, :, None] == b_ids[:, None, :]) & va[:, :, None]).any(2)
+    inter = (wa * ma).sum(1)
+    sa, sb = wa.sum(1), wb.sum(1)
+    ov = np.divide(inter, np.minimum(sa, sb), out=np.zeros_like(inter), where=np.minimum(sa, sb) > 0)
+    jac = np.divide(inter, sa + sb - inter, out=np.zeros_like(inter), where=(sa + sb - inter) > 0)
+    return ov, jac
 
 
-def _pos(df: pl.DataFrame) -> np.ndarray:
-    """Map global idx -> row position in this (country) slice."""
-    idx = df["idx"].to_numpy()
-    pos = np.full(int(idx.max()) + 1, -1, dtype=np.int64)
-    pos[idx] = np.arange(len(idx))
-    return pos
+def cheap_score(pairs: pl.DataFrame, rec: dict) -> pl.DataFrame:
+    """Numeric name + address similarity used only to rank candidates within blocks."""
+    ai, bi = pairs["a_idx"].to_numpy(), pairs["b_idx"].to_numpy()
+    n_ov, n_jac = _wov(rec["A_nt"][ai], rec["B_nt"][bi], rec["nt_idf"])
+    name = np.maximum(0.5 * n_ov + 0.5 * n_jac, (rec["A_ch"][ai] == rec["B_ch"][bi]).astype(np.float64))
+    _, a_jac = _wov(rec["A_at"][ai], rec["B_at"][bi], rec["at_idf"])
+    na, nb = rec["A_num"][ai], rec["B_num"][bi]
+    num = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1)
+    addr = np.where(rec["B_aempty"][bi], 0.3, a_jac + 0.2 * num)
+    hits = pairs.select(pl.sum_horizontal(pl.col("^k_.*$").cast(pl.Float32))).to_series().to_numpy()
+    score = name + 0.8 * addr + 0.02 * np.minimum(hits, 5)
+    return pairs.with_columns(pl.Series("cheap", score.astype(np.float32)))
 
 
-def cheap_score(a: pl.DataFrame, b: pl.DataFrame, pairs: pl.DataFrame) -> pl.DataFrame:
-    """Name + address similarity used only to rank candidates within blocks."""
-    ai = _pos(a)[pairs["a_idx"].to_numpy()]
-    bi = _pos(b)[pairs["b_idx"].to_numpy()]
-    ac, bc = a["core"].gather(ai), b["core"].gather(bi)
-    name = np.maximum(_sim(fuzz.token_set_ratio, ac, bc),
-                      _sim(fuzz.ratio, a["compact"].gather(ai), b["compact"].gather(bi)))
-    addr = _sim(fuzz.token_set_ratio, a["addr"].gather(ai), b["addr"].gather(bi))
-    empty = b["addr_empty"].gather(bi).to_numpy()
-    addr = np.where(empty, 40, addr)  # neutral value so empty-address copies are not buried
-    score = name.astype(np.float32) / 100 + 0.8 * addr.astype(np.float32) / 100
-    return pairs.with_columns(pl.Series("cheap", score))
-
-
-def prune(pairs: pl.DataFrame, k_a: int = K_A, k_b: int = K_B) -> pl.DataFrame:
+def rank_and_prune(pairs: pl.DataFrame, k_a: int = K_A, k_b: int = K_B) -> pl.DataFrame:
     pairs = pairs.with_columns(
-        pl.col("cheap").rank("ordinal", descending=True).over("a_idx").cast(pl.UInt16).alias("rank_a"))
-    pairs = pairs.filter(pl.col("rank_a") <= max(k_a, 200))
-    pairs = pairs.with_columns(
+        pl.col("cheap").rank("ordinal", descending=True).over("a_idx").cast(pl.UInt16).alias("rank_a"),
         pl.col("cheap").rank("ordinal", descending=True).over("b_idx").cast(pl.UInt16).alias("rank_b"))
     return pairs.filter((pl.col("rank_a") <= k_a) | (pl.col("rank_b") <= k_b))

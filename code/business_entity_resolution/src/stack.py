@@ -43,12 +43,13 @@ def competitor_features(d: pl.DataFrame, src: np.ndarray) -> pl.DataFrame:
     )
     # strongest competing S1 for the same record
     top2 = (d.sort(["b_idx", "p1"], descending=[False, True]).group_by("b_idx", maintain_order=True)
-              .agg(pl.col("a_idx").head(2).alias("ta"), pl.col("p1").head(2).alias("tp")))
+              .agg(pl.col("a_idx").head(2).alias("ta"), pl.col("p1").head(2).alias("tp"))
+              .select("b_idx", pl.col("ta").list.get(0).alias("a1"), pl.col("ta").list.get(1, null_on_oob=True).alias("a2"),
+                      pl.col("tp").list.get(0).alias("q1"), pl.col("tp").list.get(1, null_on_oob=True).alias("q2")))
     d = d.join(top2, on="b_idx", how="left").with_columns(
-        pl.when(pl.col("ta").list.get(0) == pl.col("a_idx")).then(pl.col("ta").list.get(1, null_on_oob=True))
-          .otherwise(pl.col("ta").list.get(0)).alias("comp"),
-        pl.when(pl.col("ta").list.get(0) == pl.col("a_idx")).then(pl.col("tp").list.get(1, null_on_oob=True))
-          .otherwise(pl.col("tp").list.get(0)).alias("comp_p")).drop("ta", "tp")
+        pl.when(pl.col("a1") == pl.col("a_idx")).then(pl.col("a2")).otherwise(pl.col("a1")).alias("comp"),
+        pl.when(pl.col("a1") == pl.col("a_idx")).then(pl.col("q2")).otherwise(pl.col("q1")).alias("comp_p")
+    ).drop("a1", "a2", "q1", "q2")
     cs = stats.rename({"a_idx": "comp", "c2": "k2", "c3": "k3", "m2": "q2", "m3": "q3"})
     d = d.join(cs, on="comp", how="left")
     cme = (pl.col("comp_p").fill_null(0) > 0.5).cast(pl.Int32)
@@ -69,25 +70,29 @@ def competitor_features(d: pl.DataFrame, src: np.ndarray) -> pl.DataFrame:
 
 
 def cluster_features(split: str, p1: pl.DataFrame) -> pl.DataFrame:
-    d = p1.select("a_idx", "b_idx", pl.col("p").alias("p1"))
+    d = p1.select(pl.col("a_idx").cast(pl.Int32), pl.col("b_idx").cast(pl.Int32), pl.col("p").cast(pl.Float32).alias("p1"))
     d = d.with_columns(
-        pl.col("p1").rank("ordinal", descending=True).over("a_idx").alias("r_a"),
-        pl.col("p1").rank("ordinal", descending=True).over("b_idx").alias("r_b"),
+        pl.col("p1").rank("ordinal", descending=True).over("a_idx").cast(pl.UInt16).alias("r_a"),
+        pl.col("p1").rank("ordinal", descending=True).over("b_idx").cast(pl.UInt16).alias("r_b"),
     )
     top = (d.sort(["a_idx", "p1"], descending=[False, True]).group_by("a_idx", maintain_order=True)
              .agg(pl.col("b_idx").head(3).alias("tb"), pl.col("p1").head(3).alias("tp"),
-                  pl.col("p1").sum().alias("psum_a"), (pl.col("p1") > 0.5).sum().alias("n50_a")))
+                  pl.col("p1").sum().alias("psum_a"), (pl.col("p1") > 0.5).sum().alias("n50_a"))
+             .select("a_idx", "psum_a", "n50_a",
+                     *[pl.col("tb").list.get(i, null_on_oob=True).alias(f"b{i}") for i in range(3)],
+                     *[pl.col("tp").list.get(i, null_on_oob=True).alias(f"t{i}") for i in range(3)]))
     topb = (d.sort(["b_idx", "p1"], descending=[False, True]).group_by("b_idx", maintain_order=True)
-              .agg(pl.col("p1").head(2).alias("tpb")))
+              .agg(pl.col("p1").head(2).alias("tpb"))
+              .select("b_idx", pl.col("tpb").list.get(0).alias("u0"), pl.col("tpb").list.get(1, null_on_oob=True).alias("u1")))
     d = d.join(top, on="a_idx", how="left").join(topb, on="b_idx", how="left")
     # best other candidate of a (partner) and second-best other
     d = d.with_columns(
-        pl.when(pl.col("r_a") == 1).then(pl.col("tp").list.get(1, null_on_oob=True)).otherwise(pl.col("tp").list.get(0)).fill_null(0).alias("pother_a"),
-        pl.when(pl.col("r_b") == 1).then(pl.col("tpb").list.get(1, null_on_oob=True)).otherwise(pl.col("tpb").list.get(0)).fill_null(0).alias("pother_b"),
-        pl.when(pl.col("r_a") == 1).then(pl.col("tb").list.get(1, null_on_oob=True)).otherwise(pl.col("tb").list.get(0)).alias("partner1"),
-        pl.when(pl.col("r_a") <= 2).then(pl.col("tb").list.get(2, null_on_oob=True)).otherwise(pl.col("tb").list.get(1, null_on_oob=True)).alias("partner2"),
-        pl.when(pl.col("r_a") <= 2).then(pl.col("tp").list.get(2, null_on_oob=True)).otherwise(pl.col("tp").list.get(1, null_on_oob=True)).fill_null(0).alias("ppartner2"),
-    ).drop("tb", "tp", "tpb")
+        pl.when(pl.col("r_a") == 1).then(pl.col("t1")).otherwise(pl.col("t0")).fill_null(0).alias("pother_a"),
+        pl.when(pl.col("r_b") == 1).then(pl.col("u1")).otherwise(pl.col("u0")).fill_null(0).alias("pother_b"),
+        pl.when(pl.col("r_a") == 1).then(pl.col("b1")).otherwise(pl.col("b0")).alias("partner1"),
+        pl.when(pl.col("r_a") <= 2).then(pl.col("b2")).otherwise(pl.col("b1")).alias("partner2"),
+        pl.when(pl.col("r_a") <= 2).then(pl.col("t2")).otherwise(pl.col("t1")).fill_null(0).alias("ppartner2"),
+    ).drop("b0", "b1", "b2", "t0", "t1", "t2", "u0", "u1")
     B = load(split, "B").select("core", "addr", "src")
     d = competitor_features(d, B["src"].to_numpy())
     core, addr = B["core"], B["addr"]

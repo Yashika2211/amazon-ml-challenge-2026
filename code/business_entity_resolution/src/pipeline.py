@@ -22,9 +22,12 @@ def countries(A: pl.DataFrame) -> list:
 
 
 def candidates(split: str, A: pl.DataFrame, B: pl.DataFrame, rec: dict) -> None:
+    import blocker
+    scorer = blocker.learned_score if blocker.available() else None
+    print(f"[cand] ranking with {'learned blocker' if scorer else 'hand-weighted score'}", flush=True)
     for c in countries(A):
         t = time.time()
-        p = block_country(A.filter(pl.col("country") == c), B.filter(pl.col("country") == c), rec)
+        p = block_country(A.filter(pl.col("country") == c), B.filter(pl.col("country") == c), rec, scorer=scorer)
         p = rank_and_prune(p)
         p.write_parquet(os.path.join(WORK, f"cand_{split}_{c}.parquet"))
         print(f"[cand] {split} {c}: {p.height:,} pairs in {time.time() - t:.0f}s", flush=True)

@@ -2,7 +2,8 @@
 
     python src/run_all.py [--from STAGE] [--to STAGE] [--no-stack] [--title "run name"] [--notes "..."]
 
-Stages: mine, prepare, train_data, test_data, fit, oof, test, stack, tune, submit.
+Stages: mine, prepare, blocker, train_data, test_data, fit, oof, test, stack, tune, submit.
+  blocker       learned blocking ranker (LightGBM on raw key-matched pairs, 10% of train S1)
   fit/oof/test  round-1 LightGBM (tag m1): fold models, OOF on train, averaged test preds
   stack         round-2 (tag m2) on round-1 features + cluster features from m1 probabilities
   tune/submit   use m2 when stacking is on, else m1
@@ -25,7 +26,7 @@ import prepare
 import stack
 from io_utils import WORK
 
-STAGES = ["mine", "prepare", "train_data", "test_data", "fit", "oof", "test", "stack", "tune", "submit"]
+STAGES = ["mine", "prepare", "blocker", "train_data", "test_data", "fit", "oof", "test", "stack", "tune", "submit"]
 
 
 def _load_models(tag):
@@ -53,6 +54,13 @@ def main() -> None:
             p = os.path.join(WORK, f"rec_{split}.npz")  # record arrays depend on the cache
             if os.path.exists(p):
                 os.remove(p)
+    if "blocker" in todo:
+        import blocker
+        A, B = prepare.load("train", "A"), prepare.load("train", "B")
+        from features import build_records
+        rec = build_records("train", A, B, mine.load_maps()["generic"])
+        blocker.train(A, B, rec, model.truth_pairs())
+        del A, B, rec
     if "train_data" in todo:
         pipeline.run_split("train")
     if "test_data" in todo:

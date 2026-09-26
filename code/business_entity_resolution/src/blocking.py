@@ -84,11 +84,15 @@ def record_keys(df: pl.DataFrame, name_df: pl.DataFrame, addr_df: pl.DataFrame) 
     return out.select("idx", "kt", (pl.col("kt") + ":" + pl.col("key")).hash().alias("h"))
 
 
-def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_000) -> pl.DataFrame:
+def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_000,
+                  scorer=None, sample_mod: int | None = None, keep_raw: bool = False) -> pl.DataFrame:
     """Return (a_idx, b_idx, hit counts per key type, cheap score) for one country.
 
     `rec` holds record arrays indexed by global idx (features.build_records).
+    `scorer(pairs, rec)` adds the ranking column "cheap" (default: hand-weighted cheap_score).
+    `sample_mod`/`keep_raw` are used to collect un-pruned pairs for training the learned ranker.
     """
+    scorer = scorer or cheap_score
     t0 = time.time()
     name_df = _df_table(a.select(pl.concat_list("core_tok", "alt_tok").alias("x")),
                         b.select(pl.concat_list("core_tok", "alt_tok").alias("x")), "x")
@@ -110,10 +114,16 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
     a_ids = a["idx"].to_numpy()
     for s in range(0, len(a_ids), chunk):
         lo, hi = a_ids[s], a_ids[min(s + chunk, len(a_ids)) - 1]
-        sub = ka.filter(pl.col("idx").is_between(lo, hi)).rename({"idx": "a_idx"})
+        sub = ka.filter(pl.col("idx").is_between(lo, hi))
+        if sample_mod:
+            sub = sub.filter(pl.col("idx") % sample_mod == 0)
+        sub = sub.rename({"idx": "a_idx"})
         pairs = sub.join(kb, on="h").group_by("a_idx", "b_idx").agg(
             *[(pl.col("kt") == kt).sum().cast(pl.UInt8).alias(f"k_{kt}") for kt in KEY_TYPES])
-        pairs = cheap_score(pairs, rec)
+        if keep_raw:
+            outs.append(pairs)
+            continue
+        pairs = scorer(pairs, rec)
         # per-S1 pre-cut (generous) so the global per-record ranking fits in memory
         pairs = pairs.filter(pl.col("cheap").rank("ordinal", descending=True).over("a_idx") <= PRE_CUT)
         outs.append(pairs)

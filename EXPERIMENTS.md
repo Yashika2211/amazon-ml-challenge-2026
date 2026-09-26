@@ -13,3 +13,14 @@ First end-to-end run. Numeric cheap ranking; 3-fold GroupKFold on a 20% S1 sampl
 - threshold_report: macro_f05=0.97775, f05_India=0.97509, f05_US=0.97952, f05_singleton=0.97835, f05_nonsingleton=0.97771, micro_precision=0.99589, micro_recall=0.94487, pred_empty_rate=0.0592
 - expected_f_report: macro_f05=0.97728, f05_India=0.9747, f05_US=0.979, f05_singleton=0.959, f05_nonsingleton=0.97836, micro_precision=0.99608, micro_recall=0.94358, pred_empty_rate=0.0575
 
+## v2: +4 blocking keys, number edit/shift features, round-2 stacking [m2] (2026-09-27)
+
+Blocking adds name x number, 3-token address bigrams, 1-deletion typo keys; digit-edit-1 and house-number shift features; dotted acronym collapse; 30% training sample; round-2 cluster features; hybrid expected-F decision.
+
+**Blocking:** pairs=45606134, pairs_per_s1=20.67, pair_recall=0.97894, pair_recall_India=0.97342, pair_recall_US=0.98263, reduction_ratio=0.999998
+
+**Decision:** expected_f05, thresholds (t_abs, r, t_empty) = (0.0, 0.7, 0.45), expected-F (miss_rate, t_empty) = (0.0, 0.4)
+
+- threshold_report: macro_f05=0.98432, f05_India=0.9821, f05_US=0.98581, f05_singleton=0.98665, f05_nonsingleton=0.98419, micro_precision=0.99739, micro_recall=0.95886, pred_empty_rate=0.0582
+- expected_f_report: macro_f05=0.98437, f05_India=0.98216, f05_US=0.98584, f05_singleton=0.98711, f05_nonsingleton=0.9842, micro_precision=0.9978, micro_recall=0.95786, pred_empty_rate=0.0583
+

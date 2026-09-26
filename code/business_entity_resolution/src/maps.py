@@ -38,7 +38,7 @@ STREET_MAP = {
     "north": "n", "south": "s", "east": "e", "west": "w", "mount": "mt", "fort": "ft",
     "center": "ctr", "centre": "ctr", "expressway": "expy", "freeway": "fwy",
     # India
-    "near": "nr", "opposite": "opp", "oppo": "opp", "floor": "flr", "fl": "flr",
+    "near": "nr", "opposite": "opp", "oppo": "opp", "floor": "flr",
     "building": "bldg", "bldng": "bldg", "society": "soc", "sector": "sec", "nagar": "ngr",
     "colony": "col", "district": "dist", "dt": "dist", "taluk": "tq", "taluka": "tq",
     "tehsil": "teh", "village": "vill", "vil": "vill", "post": "po", "cross": "crs",

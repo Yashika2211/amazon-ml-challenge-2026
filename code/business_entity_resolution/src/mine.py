@@ -13,6 +13,7 @@ import re
 from collections import Counter, defaultdict
 
 import polars as pl
+from rapidfuzz import fuzz
 from rapidfuzz.distance import JaroWinkler
 
 from io_utils import WORK, load_source, load_truth
@@ -85,20 +86,23 @@ def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20) ->
     tot = b_only.group_by("b").len().rename({"len": "tot"})
     freq1 = (s1.select(pl.col("addr_comp").explode().alias("c")).group_by("c").len()
                .rename({"len": "f1"}))
-    best = (pairs.sort("len", descending=True).group_by("b").first()
-                 .join(tot, on="b").filter((pl.col("len") >= min_count) & (pl.col("len") / pl.col("tot") >= 0.5))
-                 .join(freq1.rename({"c": "a", "f1": "fa"}), on="a", how="left")
-                 .join(freq1.rename({"c": "b", "f1": "fb"}), on="b", how="left")
-                 .with_columns(pl.col("fa").fill_null(0), pl.col("fb").fill_null(0))
-                 .filter(pl.col("fa") > pl.col("fb")))
-    alias = {}
-    for b_c, a_c, n, t, fa in best.select("b", "a", "len", "tot", "fa").iter_rows():
-        sim = JaroWinkler.normalized_similarity(skeleton(b_c.replace(" ", "")), skeleton(a_c.replace(" ", "")))
+    pairs = (pairs.filter(pl.col("len") >= min_count).join(tot, on="b")
+                  .join(freq1.rename({"c": "a", "f1": "fa"}), on="a", how="left")
+                  .join(freq1.rename({"c": "b", "f1": "fb"}), on="b", how="left")
+                  .with_columns(pl.col("fa").fill_null(0), pl.col("fb").fill_null(0))
+                  .filter(pl.col("fa") > pl.col("fb")))
+    best: dict = {}
+    for b_c, a_c, n, t, fa in pairs.select("b", "a", "len", "tot", "fa").iter_rows():
+        if n / t < 0.3:
+            continue
+        sim = max(fuzz.ratio(b_c, a_c), fuzz.ratio(skeleton(b_c.replace(" ", "")), skeleton(a_c.replace(" ", "")))) / 100
         # spelling variant / transliteration of the same place, or a state-code style alias
-        # (same initial, very frequent canonical form, consistent replacement)
         code_like = min(len(b_c), len(a_c)) <= 3 and max(len(b_c.split()), len(a_c.split())) <= 2
-        if sim >= 0.8 or (code_like and b_c[0] == a_c[0] and n >= 300 and n / t >= 0.6 and fa >= 2000):
-            alias[b_c] = a_c
+        ok = sim >= 0.8 or (code_like and b_c[0] == a_c[0] and n >= 300 and n / t >= 0.6 and fa >= 2000)
+        score = n * (0.5 + sim)
+        if ok and score > best.get(b_c, (0, None))[0]:
+            best[b_c] = (score, a_c)
+    alias = {b: v[1] for b, v in best.items()}
     for k in list(alias):  # resolve chains a->b->c
         seen = {k}
         v = alias[k]

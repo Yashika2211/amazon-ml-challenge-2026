@@ -1,0 +1,12 @@
+# raw competition data (files exceed GitHub's 100 MB limit)
+student_resource/dataset/
+# local environment and caches
+.venv/
+work/
+__pycache__/
+*.pyc
+.DS_Store
+entity_resolution_prompt.md
+# large generated outputs are shipped in the zip / release, not in git
+output/*.tsv
+*.zip

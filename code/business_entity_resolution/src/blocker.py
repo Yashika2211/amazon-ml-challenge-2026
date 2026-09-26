@@ -35,9 +35,10 @@ def raw_features(pairs: pl.DataFrame, rec: dict) -> np.ndarray:
     f["c_eq"] = (rec["A_ch"][ai] == rec["B_ch"][bi]).astype(np.float32)
     f["a_ov"], f["a_jac"] = _wov(rec, "at", ai, bi, rec["at_idf"])
     f["ac_ov"], f["ac_jac"] = _wov(rec, "ac", ai, bi, rec["ac_idf"])
-    na, nb = rec["A_num"][ai], rec["B_num"][bi]
-    f["num_any"] = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1).astype(np.float32)
-    f["num_first_eq"] = ((na[:, 0] == nb[:, 0]) & (na[:, 0] != 0)).astype(np.float32)
+    from fastops import weighted_overlap
+    f["num_any"] = (weighted_overlap(rec["A_nm"], rec["B_nm"], ai, bi, np.ones(len(rec["nm_idf"]), np.float32))[3] > 0).astype(np.float32)
+    a0, b0 = rec["A_nm0"][ai], rec["B_nm0"][bi]
+    f["num_first_eq"] = ((a0 == b0) & (a0 >= 0)).astype(np.float32)
     f["num_first_edit1"] = digit_edit1(rec["A_numv"][ai, 0], rec["B_numv"][bi, 0]).astype(np.float32)
     f["b_aempty"] = rec["B_aempty"][bi].astype(np.float32)
     f["a_aempty"] = rec["A_aempty"][ai].astype(np.float32)

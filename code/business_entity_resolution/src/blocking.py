@@ -107,7 +107,10 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
     for kt, cap in PAIR_CAP.items():
         cap_expr = pl.when(pl.col("kt") == kt).then(cap).otherwise(cap_expr)
     ok = caps.filter(pl.col("prod") <= cap_expr).select("h")
-    ka = ka.join(ok, on="h", how="semi")
+    kbit = pl.lit(0, pl.UInt64)
+    for i, kt in enumerate(KEY_TYPES):
+        kbit = pl.when(pl.col("kt") == kt).then(pl.lit(1 << (6 * i), pl.UInt64)).otherwise(kbit)
+    ka = ka.join(ok, on="h", how="semi").with_columns(kbit.alias("kbit")).select("idx", "h", "kbit")
     kb = kb.join(ok, on="h", how="semi").select("h", pl.col("idx").alias("b_idx"))
     print(f"  keys built {time.time() - t0:.0f}s  A-keys {ka.height:,}  B-keys {kb.height:,}", flush=True)
     outs = []
@@ -118,8 +121,12 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
         if sample_mod:
             sub = sub.filter(pl.col("idx") % sample_mod == 0)
         sub = sub.rename({"idx": "a_idx"})
-        pairs = sub.join(kb, on="h").group_by("a_idx", "b_idx").agg(
-            *[(pl.col("kt") == kt).sum().cast(pl.UInt8).alias(f"k_{kt}") for kt in KEY_TYPES])
+        # per-key-type hit counts packed into 6-bit fields of one u64, summed in a single aggregation
+        j = sub.join(kb, on="h")
+        pairs = j.group_by("a_idx", "b_idx").agg(pl.col("kbit").sum())
+        pairs = pairs.with_columns(
+            *[((pl.col("kbit") // (1 << (6 * i))) % 64).cast(pl.UInt8).alias(f"k_{kt}") for i, kt in enumerate(KEY_TYPES)]
+        ).drop("kbit")
         if keep_raw:
             outs.append(pairs)
             continue
@@ -153,8 +160,8 @@ def cheap_score(pairs: pl.DataFrame, rec: dict) -> pl.DataFrame:
     n_ov, n_jac = _wov(rec, "nt", ai, bi, rec["nt_idf"])
     name = np.maximum(0.5 * n_ov + 0.5 * n_jac, (rec["A_ch"][ai] == rec["B_ch"][bi]).astype(np.float64))
     _, a_jac = _wov(rec, "at", ai, bi, rec["at_idf"])
-    na, nb = rec["A_num"][ai], rec["B_num"][bi]
-    num = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1)
+    from fastops import weighted_overlap
+    num = weighted_overlap(rec["A_nm"], rec["B_nm"], ai, bi, np.ones(len(rec["nm_idf"]), np.float32))[3] > 0
     addr = np.where(rec["B_aempty"][bi], 0.6, a_jac + 0.2 * num)  # empty address: neutral, let the model decide
     hits = pairs.select(pl.sum_horizontal(pl.col("^k_.*$").cast(pl.Float32))).to_series().to_numpy()
     score = name + 0.8 * addr + 0.02 * np.minimum(hits, 5)

@@ -53,7 +53,7 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
     both = pl.concat([A.with_columns(pl.lit(0).alias("side")), B.with_columns(pl.lit(1).alias("side"))], how="diagonal_relaxed")
     n_rec = both.height
     rec = {}
-    for col, width, key in (("core_tok", NT, "nt"), ("addr_tok", NA, "at"), ("addr_comp", NC, "ac")):
+    for col, width, key in (("core_tok", NT, "nt"), ("addr_tok", NA, "at"), ("addr_comp", NC, "ac"), ("addr_num", NN, "nm")):
         v = both.select(pl.col(col).list.unique().alias("t")).explode("t").drop_nulls().group_by("t").len()
         v = v.with_row_index("id").with_columns(pl.col("id").cast(pl.Int32))
         idf = np.log(n_rec / v["len"].to_numpy().astype(np.float64)).astype(np.float32)

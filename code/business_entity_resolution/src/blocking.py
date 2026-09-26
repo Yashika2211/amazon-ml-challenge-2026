@@ -5,8 +5,10 @@ Keys (hashed to u64), union over:
   b  bigram of the 2 rarest core-name tokens
   c/p/s  compact name: full, 6-char prefix, 6-char suffix
   a  (address number, rare address token)
-  d  bigram of the 2 rarest non-numeric address tokens (street / locality)
+  d  bigrams of the 3 rarest non-numeric address tokens (street / locality)
   x  (rarest name token, rarest address token)
+  y  (rare name token, address number)
+  e  1-deletion neighbourhood of the 2 rarest name tokens (typos)
 Keys whose |A|*|B| block product exceeds a cap are skipped.
 
 Candidates are then ranked with a cheap rapidfuzz similarity; we keep the top K_A per
@@ -21,7 +23,7 @@ import polars as pl
 
 TOK_DF_CAP = 5000
 PAIR_CAP = {"t": 40_000, "b": 200_000, "c": 200_000, "p": 20_000, "s": 20_000, "a": 20_000,
-            "d": 20_000, "x": 20_000}
+            "d": 20_000, "x": 20_000, "y": 20_000, "e": 40_000}
 KEY_TYPES = list(PAIR_CAP)
 
 
@@ -53,17 +55,31 @@ def record_keys(df: pl.DataFrame, name_df: pl.DataFrame, addr_df: pl.DataFrame) 
     long = comp.filter(pl.col("compact").str.len_chars() >= 8)
     parts.append(long.select("idx", pl.lit("p").alias("kt"), pl.col("compact").str.slice(0, 6).alias("key")))
     parts.append(long.select("idx", pl.lit("s").alias("kt"), pl.col("compact").str.slice(-6).alias("key")))
-    at = _rare(df, "addr_tok", addr_df, 2, None, ~pl.col("t").str.contains(r"^[0-9]+$"))
+    at = _rare(df, "addr_tok", addr_df, 3, None, ~pl.col("t").str.contains(r"^[0-9]+$"))
     nums = df.select("idx", pl.col("addr_num").list.head(2).alias("n")).explode("n").drop_nulls()
-    an = nums.join(at.select("idx", "t"), on="idx").select(
-        "idx", pl.lit("a").alias("kt"), (pl.col("n") + "|" + pl.col("t")).alias("key"))
-    parts.append(an)
-    at2 = at.group_by("idx").agg(pl.col("t").sort().str.join(" ").alias("key"), pl.len().alias("n"))
-    parts.append(at2.filter(pl.col("n") == 2).select("idx", pl.lit("d").alias("kt"), "key"))
+    parts.append(nums.join(at.select("idx", "t"), on="idx").select(
+        "idx", pl.lit("a").alias("kt"), (pl.col("n") + "|" + pl.col("t")).alias("key")))
+    # bigrams of the 3 rarest street/locality tokens (3 keys)
+    at_l = at.group_by("idx").agg(pl.col("t"))
+    for i, j in ((0, 1), (0, 2), (1, 2)):
+        bg = at_l.filter(pl.col("t").list.len() > j).select(
+            "idx", pl.concat_list(pl.col("t").list.get(i), pl.col("t").list.get(j)).list.sort().list.join(" ").alias("key"))
+        parts.append(bg.select("idx", pl.lit("d").alias("kt"), "key"))
     r1 = _rare(name, "nt", name_df, 1, None).select("idx", pl.col("t").alias("nt1"))
     a1 = at.group_by("idx", maintain_order=True).first().select("idx", pl.col("t").alias("at1"))
     parts.append(r1.join(a1, on="idx").select("idx", pl.lit("x").alias("kt"),
                                               (pl.col("nt1") + "|" + pl.col("at1")).alias("key")))
+    # (rare name token, address number): same business number, name partially intact
+    r2n = _rare(name, "nt", name_df, 2, None).select("idx", "t")
+    parts.append(r2n.join(nums, on="idx").select("idx", pl.lit("y").alias("kt"),
+                                                (pl.col("t") + "|" + pl.col("n")).alias("key")))
+    # typo tolerance: 1-deletion neighbourhood of the 2 rarest name tokens (len >= 5)
+    lng = r2n.rename({"t": "nt1"}).filter(pl.col("nt1").str.len_chars() >= 5)
+    dels = [lng.select("idx", pl.col("nt1").alias("key"))]
+    for k in range(12):
+        dels.append(lng.filter(pl.col("nt1").str.len_chars() > k).select(
+            "idx", (pl.col("nt1").str.slice(0, k) + pl.col("nt1").str.slice(k + 1)).alias("key")))
+    parts.append(pl.concat(dels).select("idx", pl.lit("e").alias("kt"), "key"))
     out = pl.concat(parts).unique()
     return out.select("idx", "kt", (pl.col("kt") + ":" + pl.col("key")).hash().alias("h"))
 

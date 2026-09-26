@@ -10,3 +10,4 @@ entity_resolution_prompt.md
 # large generated outputs are shipped in the zip / release, not in git
 output/*.tsv
 *.zip
+output/**/*.tsv

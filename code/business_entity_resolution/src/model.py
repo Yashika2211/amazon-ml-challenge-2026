@@ -15,7 +15,7 @@ from io_utils import WORK, load_truth
 from prepare import load
 
 N_FOLDS = 3
-TRAIN_FRAC = 0.2  # fraction of S1 groups whose pairs are used for fitting (memory bound)
+TRAIN_FRAC = 0.3  # fraction of S1 groups whose pairs are used for fitting (memory bound)
 ID_COLS = ["a_idx", "b_idx"]
 PARAMS = dict(objective="binary", learning_rate=0.08, num_leaves=127, min_data_in_leaf=200,
               feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,

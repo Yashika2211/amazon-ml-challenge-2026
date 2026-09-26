@@ -64,6 +64,9 @@ def run_split(split: str, steps=("cand", "feat")) -> None:
     rec = build_records(split, A, B, load_maps()["generic"])
     if "cand" in steps:
         candidates(split, A, B, rec)
+        if split == "train":
+            import evaluate
+            print("[cand] blocking report:", evaluate.blocking_report("train"), flush=True)
     if "feat" in steps:
         featurize(split, A, B, rec)
 

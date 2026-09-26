@@ -57,9 +57,9 @@ def per_a_scores(pred: pl.DataFrame, truth_counts: pl.DataFrame, all_a: pl.DataF
 
 def grid_search(pairs: pl.DataFrame, truth_counts: pl.DataFrame, all_a: pl.DataFrame,
                 t_abs_grid=None, r_grid=None, t_empty_grid=None) -> tuple:
-    t_abs_grid = t_abs_grid or [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-    r_grid = r_grid or [0.0, 0.3, 0.5, 0.7]
-    t_empty_grid = t_empty_grid or [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    t_abs_grid = t_abs_grid or [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
+    r_grid = r_grid or [0.0, 0.3, 0.5, 0.6, 0.7, 0.8]
+    t_empty_grid = t_empty_grid or [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     base = one_to_one(pairs).filter(pl.col("p") >= min(t_abs_grid))
     best = (-1, None)
     for t_abs, r, t_e in itertools.product(t_abs_grid, r_grid, t_empty_grid):

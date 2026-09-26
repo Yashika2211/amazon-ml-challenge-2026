@@ -69,6 +69,12 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
                                         .list.to_array(NN))["addr_num"].to_numpy().astype(np.uint64))
         # count of S1 records sharing the exact core string -> "common name"
     for side, df in (("A", A), ("B", B)):
+        # first 3 address numbers as integers (<= 9 digits) for digit-edit features
+        v = (df.select(pl.col("addr_num").list.eval(pl.element().filter(pl.element().str.len_chars() <= 9))
+                       .list.head(3).list.eval(pl.element().cast(pl.Int64))
+                       .list.concat(pl.lit([-1, -1, -1], dtype=pl.List(pl.Int64))).list.head(3).list.to_array(3))
+             ["addr_num"].to_numpy())
+        rec[side + "_numv"] = v.astype(np.int64)
         rec[side + "_ch"] = df["compact"].hash().to_numpy()
         rec[side + "_aempty"] = df["addr_empty"].to_numpy()
     cf = both.group_by("core").len()
@@ -119,6 +125,35 @@ def _set_feats(a_ids, b_ids, idf, df=None, gen=None, prefix=""):
                                             out=np.zeros(len(va), np.float32), where=(wa * (1 - g_a)).sum(1) > 0)
         f[prefix + "first_eq"] = (a_ids[:, 0] == b_ids[:, 0]) & (a_ids[:, 0] >= 0)
     return {k: np.asarray(v, dtype=np.float32) for k, v in f.items()}
+
+
+def _ndig(x: np.ndarray) -> np.ndarray:
+    n = np.ones_like(x)
+    for k in range(1, 10):
+        n += (x >= 10 ** k)
+    return n
+
+
+def digit_edit1(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """True where non-negative ints a != b are within one digit edit (sub / insert / delete)."""
+    ok = (a >= 0) & (b >= 0) & (a != b)
+    la, lb = _ndig(np.maximum(a, 0)), _ndig(np.maximum(b, 0))
+    # substitution: same length, exactly one differing digit
+    diff = np.zeros_like(a)
+    x, y = a.copy(), b.copy()
+    for _ in range(10):
+        diff += (x % 10) != (y % 10)
+        x //= 10
+        y //= 10
+    sub = (la == lb) & (diff == 1)
+    # deletion: remove one digit from the longer number
+    lo, sh = np.where(la > lb, a, b), np.where(la > lb, b, a)
+    dele = np.zeros(a.shape, bool)
+    for k in range(10):
+        p = 10 ** k
+        dele |= ((lo // (p * 10)) * p + lo % p) == sh
+    dele &= np.abs(la - lb) == 1
+    return ok & (sub | dele)
 
 
 def _cp(fn, x, y):
@@ -185,6 +220,13 @@ def pair_features(pairs: pl.DataFrame, SA: pl.DataFrame, SB: pl.DataFrame, rec: 
     f["num_first_in"] = (eqn[:, 0, :].any(1)).astype(np.float32)
     f["num_conf"] = ((cnt_a > 0) & (cnt_b > 0) & (inter == 0)).astype(np.float32)
     f["num_na"], f["num_nb"] = cnt_a.astype(np.float32), cnt_b.astype(np.float32)
+    va_, vb_ = rec["A_numv"][ai], rec["B_numv"][bi]
+    e1 = np.zeros(len(ai), bool)
+    for i in range(3):
+        for j in range(3):
+            e1 |= digit_edit1(va_[:, i], vb_[:, j])
+    f["num_edit1"] = e1.astype(np.float32)
+    f["num_first_edit1"] = digit_edit1(va_[:, 0], vb_[:, 0]).astype(np.float32)
     f["corefreq_a"] = np.log1p(rec["A_corefreq"][ai]).astype(np.float32)
     f["corefreq_b"] = np.log1p(rec["B_corefreq"][bi]).astype(np.float32)
     out = pairs.select("a_idx", "b_idx").with_columns([pl.Series(k, np.asarray(v, np.float32)) for k, v in f.items()])

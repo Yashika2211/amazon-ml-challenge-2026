@@ -21,7 +21,7 @@ def prepare(split: str, maps: dict) -> None:
     b = pl.concat([normalize(load_source(split, s), maps).with_columns(pl.lit(s, pl.Int8).alias("src"))
                    for s in (2, 3)])
     for name, df in (("A", a), ("B", b)):
-        df = df.with_row_index("idx").with_columns(pl.col("idx").cast(pl.Int32))
+        df = df.sort("country", maintain_order=True).with_row_index("idx").with_columns(pl.col("idx").cast(pl.Int32))
         df.write_parquet(os.path.join(WORK, f"{split}_{name}.parquet"))
     print(f"prepared {split}: A={a.height} B={b.height} in {time.time() - t:.0f}s", flush=True)
 

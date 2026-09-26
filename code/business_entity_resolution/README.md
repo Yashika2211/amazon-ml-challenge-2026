@@ -50,6 +50,7 @@ training positives in `src/mine.py`.
 | pyarrow | Apache-2.0 |
 | numpy, scipy, scikit-learn, joblib, threadpoolctl | BSD-3-Clause |
 | lightgbm | MIT |
+| numba, llvmlite | BSD-2-Clause |
 | rapidfuzz | MIT |
 | anyascii | ISC |
 

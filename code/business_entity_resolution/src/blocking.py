@@ -140,24 +140,19 @@ K_B = 5
 PRE_CUT = 150
 
 
-def _wov(a_ids: np.ndarray, b_ids: np.ndarray, idf: np.ndarray):
-    va, vb = a_ids >= 0, b_ids >= 0
-    wa = np.where(va, idf[np.maximum(a_ids, 0)], 0.0)
-    wb = np.where(vb, idf[np.maximum(b_ids, 0)], 0.0)
-    ma = ((a_ids[:, :, None] == b_ids[:, None, :]) & va[:, :, None]).any(2)
-    inter = (wa * ma).sum(1)
-    sa, sb = wa.sum(1), wb.sum(1)
-    ov = np.divide(inter, np.minimum(sa, sb), out=np.zeros_like(inter), where=np.minimum(sa, sb) > 0)
-    jac = np.divide(inter, sa + sb - inter, out=np.zeros_like(inter), where=(sa + sb - inter) > 0)
-    return ov, jac
+def _wov(rec: dict, key: str, ai: np.ndarray, bi: np.ndarray, idf: np.ndarray):
+    """IDF-weighted overlap coefficient and Jaccard between sorted padded token-id rows."""
+    from fastops import ov_jac, weighted_overlap
+    inter, sa, sb, _, _, _ = weighted_overlap(rec["A_" + key], rec["B_" + key], ai, bi, idf)
+    return ov_jac(inter, sa, sb)
 
 
 def cheap_score(pairs: pl.DataFrame, rec: dict) -> pl.DataFrame:
     """Numeric name + address similarity used only to rank candidates within blocks."""
     ai, bi = pairs["a_idx"].to_numpy(), pairs["b_idx"].to_numpy()
-    n_ov, n_jac = _wov(rec["A_nt"][ai], rec["B_nt"][bi], rec["nt_idf"])
+    n_ov, n_jac = _wov(rec, "nt", ai, bi, rec["nt_idf"])
     name = np.maximum(0.5 * n_ov + 0.5 * n_jac, (rec["A_ch"][ai] == rec["B_ch"][bi]).astype(np.float64))
-    _, a_jac = _wov(rec["A_at"][ai], rec["B_at"][bi], rec["at_idf"])
+    _, a_jac = _wov(rec, "at", ai, bi, rec["at_idf"])
     na, nb = rec["A_num"][ai], rec["B_num"][bi]
     num = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1)
     addr = np.where(rec["B_aempty"][bi], 0.6, a_jac + 0.2 * num)  # empty address: neutral, let the model decide

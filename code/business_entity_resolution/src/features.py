@@ -12,6 +12,7 @@ import polars as pl
 from rapidfuzz import fuzz, process
 from rapidfuzz.distance import JaroWinkler
 
+from fastops import ov_jac, sort_ids, weighted_overlap
 from io_utils import WORK
 
 NT, NA, NN, NC = 8, 16, 6, 8  # widths: name tokens, address tokens, numbers, components
@@ -61,8 +62,10 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
             g[gm["id"].to_numpy()] = gm["g"].to_numpy()
             rec["nt_gen"] = g
         vocab = v.select("t", "id")
-        rec["A_" + key] = _ids(A, col, vocab, width)
-        rec["B_" + key] = _ids(B, col, vocab, width)
+        for side, df in (("A", A), ("B", B)):
+            ids = _ids(df, col, vocab, width)
+            rec[f"{side}_{key}0"] = ids[:, 0].copy()  # first token (order matters for first_eq)
+            rec[f"{side}_{key}"] = sort_ids(ids)       # sorted rows for merge-intersection kernels
     for side, df in (("A", A), ("B", B)):
         rec[side + "_num"] = (df.select(pl.col("addr_num").list.head(NN).list.eval(pl.element().hash())
                                         .list.concat(pl.lit([0] * NN, dtype=pl.List(pl.UInt64))).list.head(NN)
@@ -85,46 +88,43 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
     return rec
 
 
-def _set_feats(a_ids, b_ids, idf, df=None, gen=None, prefix=""):
-    """IDF-weighted set overlap between padded id arrays (n, w)."""
-    va, vb = a_ids >= 0, b_ids >= 0
-    wa = np.where(va, idf[np.maximum(a_ids, 0)], 0.0)
-    wb = np.where(vb, idf[np.maximum(b_ids, 0)], 0.0)
-    eq = (a_ids[:, :, None] == b_ids[:, None, :]) & va[:, :, None]
-    ma = eq.any(2)  # a-token matched
-    mb = eq.any(1)
-    sa, sb = wa.sum(1), wb.sum(1)
-    inter = (wa * ma).sum(1)
-    union = sa + sb - inter
+def _set_feats(rec: dict, key: str, ai: np.ndarray, bi: np.ndarray, idf, df=None, gen=None, prefix=""):
+    """IDF-weighted set overlap between sorted padded id rows (numba merge kernel)."""
+    A, B = rec["A_" + key], rec["B_" + key]
+    inter, sa, sb, nm, ua, ub = weighted_overlap(A, B, ai, bi, idf)
+    ones = np.ones_like(idf)
+    _, na, nb, _, _, _ = weighted_overlap(A, B, ai, bi, ones)
+    ib = inter  # symmetric: matched weight is the same on both sides
+    z = np.zeros_like(inter)
     f = {
-        prefix + "wjac": np.divide(inter, union, out=np.zeros_like(inter), where=union > 0),
-        prefix + "wov": np.divide(inter, np.minimum(sa, sb), out=np.zeros_like(inter), where=np.minimum(sa, sb) > 0),
-        prefix + "wcov_a": np.divide(inter, sa, out=np.zeros_like(inter), where=sa > 0),
-        prefix + "wcov_b": np.divide((wb * mb).sum(1), sb, out=np.zeros_like(inter), where=sb > 0),
-        prefix + "nmatch": ma.sum(1).astype(np.float32),
-        prefix + "na": va.sum(1).astype(np.float32),
-        prefix + "nb": vb.sum(1).astype(np.float32),
-        prefix + "maxidf_un_a": np.where(va & ~ma, wa, 0).max(1),
-        prefix + "maxidf_un_b": np.where(vb & ~mb, wb, 0).max(1),
+        prefix + "wjac": np.divide(inter, sa + sb - inter, out=z.copy(), where=(sa + sb - inter) > 0),
+        prefix + "wov": np.divide(inter, np.minimum(sa, sb), out=z.copy(), where=np.minimum(sa, sb) > 0),
+        prefix + "wcov_a": np.divide(inter, sa, out=z.copy(), where=sa > 0),
+        prefix + "wcov_b": np.divide(ib, sb, out=z.copy(), where=sb > 0),
+        prefix + "nmatch": nm,
+        prefix + "na": na,
+        prefix + "nb": nb,
+        prefix + "maxidf_un_a": ua,
+        prefix + "maxidf_un_b": ub,
     }
     if df is not None:
-        dfa = np.where(va & ~ma, df[np.maximum(a_ids, 0)], 0)
-        dfb = np.where(vb & ~mb, df[np.maximum(b_ids, 0)], 0)
-        f[prefix + "maxdf_un_a"] = np.log1p(dfa.max(1)).astype(np.float32)
-        f[prefix + "maxdf_un_b"] = np.log1p(dfb.max(1)).astype(np.float32)
+        dfw = df.astype(np.float32)
+        _, _, _, _, ma_, mb_ = weighted_overlap(A, B, ai, bi, dfw)
+        f[prefix + "maxdf_un_a"] = np.log1p(ma_)
+        f[prefix + "maxdf_un_b"] = np.log1p(mb_)
     if gen is not None:
-        g_b = np.where(vb, gen[np.maximum(b_ids, 0)], 0)
-        g_a = np.where(va, gen[np.maximum(a_ids, 0)], 0)
-        # distinctive unmatched tokens: seen elsewhere (df>=3) and not a known noise token
-        dist_b = vb & ~mb & (df[np.maximum(b_ids, 0)] >= 3) & (g_b < 0.3)
-        dist_a = va & ~ma & (df[np.maximum(a_ids, 0)] >= 3) & (g_a < 0.3)
-        f[prefix + "ndist_un_b"] = dist_b.sum(1).astype(np.float32)
-        f[prefix + "ndist_un_a"] = dist_a.sum(1).astype(np.float32)
-        f[prefix + "gen_un_b"] = np.where(vb & ~mb, g_b, 0).sum(1).astype(np.float32)
-        f[prefix + "gen_frac_b"] = np.divide(np.where(vb, g_b, 0).sum(1), vb.sum(1), out=np.zeros(len(vb), np.float32), where=vb.sum(1) > 0)
-        f[prefix + "wov_nogen"] = np.divide(((wa * ma) * (1 - g_a)).sum(1), (wa * (1 - g_a)).sum(1),
-                                            out=np.zeros(len(va), np.float32), where=(wa * (1 - g_a)).sum(1) > 0)
-        f[prefix + "first_eq"] = (a_ids[:, 0] == b_ids[:, 0]) & (a_ids[:, 0] >= 0)
+        dist = ((df >= 3) & (gen < 0.3)).astype(np.float32)
+        i_d, s_d_a, s_d_b, _, _, _ = weighted_overlap(A, B, ai, bi, dist)
+        f[prefix + "ndist_un_b"] = s_d_b - i_d
+        f[prefix + "ndist_un_a"] = s_d_a - i_d
+        i_g, s_g_a, s_g_b, _, _, _ = weighted_overlap(A, B, ai, bi, gen.astype(np.float32))
+        f[prefix + "gen_un_b"] = s_g_b - i_g
+        f[prefix + "gen_frac_b"] = np.divide(s_g_b, nb, out=z.copy(), where=nb > 0)
+        wng = (idf * (1 - gen)).astype(np.float32)
+        i_n, s_n_a, _, _, _, _ = weighted_overlap(A, B, ai, bi, wng)
+        f[prefix + "wov_nogen"] = np.divide(i_n, s_n_a, out=z.copy(), where=s_n_a > 0)
+        a0, b0 = rec["A_" + key + "0"][ai], rec["B_" + key + "0"][bi]
+        f[prefix + "first_eq"] = ((a0 == b0) & (a0 >= 0)).astype(np.float32)
     return {k: np.asarray(v, dtype=np.float32) for k, v in f.items()}
 
 
@@ -206,9 +206,9 @@ def pair_features(pairs: pl.DataFrame, SA: pl.DataFrame, SB: pl.DataFrame, rec: 
     f["native_b"] = SB["native"].gather(bi).to_numpy().astype(np.float32)
     f["aempty_b"] = SB["addr_empty"].gather(bi).to_numpy().astype(np.float32)
     ra, rb = pairs["a_idx"].to_numpy(), pairs["b_idx"].to_numpy()
-    f.update(_set_feats(rec["A_nt"][ai], rec["B_nt"][bi], rec["nt_idf"], rec["nt_df"], rec["nt_gen"], "nt_"))
-    f.update(_set_feats(rec["A_at"][ai], rec["B_at"][bi], rec["at_idf"], rec["at_df"], None, "at_"))
-    f.update(_set_feats(rec["A_ac"][ai], rec["B_ac"][bi], rec["ac_idf"], None, None, "ac_"))
+    f.update(_set_feats(rec, "nt", ai, bi, rec["nt_idf"], rec["nt_df"], rec["nt_gen"], "nt_"))
+    f.update(_set_feats(rec, "at", ai, bi, rec["at_idf"], rec["at_df"], None, "at_"))
+    f.update(_set_feats(rec, "ac", ai, bi, rec["ac_idf"], None, None, "ac_"))
     na, nb = rec["A_num"][ai], rec["B_num"][bi]
     va, vb = na != 0, nb != 0
     eqn = (na[:, :, None] == nb[:, None, :]) & va[:, :, None]

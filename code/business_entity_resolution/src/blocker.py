@@ -31,18 +31,18 @@ def raw_features(pairs: pl.DataFrame, rec: dict) -> np.ndarray:
     f = {}
     for k in KEY_TYPES:
         f[f"k_{k}"] = pairs[f"k_{k}"].to_numpy().astype(np.float32)
-    f["n_ov"], f["n_jac"] = _wov(rec["A_nt"][ai], rec["B_nt"][bi], rec["nt_idf"])
+    f["n_ov"], f["n_jac"] = _wov(rec, "nt", ai, bi, rec["nt_idf"])
     f["c_eq"] = (rec["A_ch"][ai] == rec["B_ch"][bi]).astype(np.float32)
-    f["a_ov"], f["a_jac"] = _wov(rec["A_at"][ai], rec["B_at"][bi], rec["at_idf"])
-    f["ac_ov"], f["ac_jac"] = _wov(rec["A_ac"][ai], rec["B_ac"][bi], rec["ac_idf"])
+    f["a_ov"], f["a_jac"] = _wov(rec, "at", ai, bi, rec["at_idf"])
+    f["ac_ov"], f["ac_jac"] = _wov(rec, "ac", ai, bi, rec["ac_idf"])
     na, nb = rec["A_num"][ai], rec["B_num"][bi]
     f["num_any"] = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1).astype(np.float32)
     f["num_first_eq"] = ((na[:, 0] == nb[:, 0]) & (na[:, 0] != 0)).astype(np.float32)
     f["num_first_edit1"] = digit_edit1(rec["A_numv"][ai, 0], rec["B_numv"][bi, 0]).astype(np.float32)
     f["b_aempty"] = rec["B_aempty"][bi].astype(np.float32)
     f["a_aempty"] = rec["A_aempty"][ai].astype(np.float32)
-    f["na_tok"] = (rec["A_nt"][ai] >= 0).sum(1).astype(np.float32)
-    f["nb_tok"] = (rec["B_nt"][bi] >= 0).sum(1).astype(np.float32)
+    f["na_tok"] = (rec["A_nt"] >= 0).sum(1)[ai].astype(np.float32)
+    f["nb_tok"] = (rec["B_nt"] >= 0).sum(1)[bi].astype(np.float32)
     f["src_b"] = rec["B_src"][bi].astype(np.float32)
     f["cf_a"] = np.log1p(rec["A_corefreq"][ai]).astype(np.float32)
     f["cf_b"] = np.log1p(rec["B_corefreq"][bi]).astype(np.float32)

@@ -18,7 +18,7 @@ def apply_thresholds(pairs: pl.DataFrame, t_abs: float, r: float, t_empty: float
     return p.filter((pl.col("p") >= t_abs) & (pl.col("p") >= r * pl.col("_pmax")) & (pl.col("_pmax") >= t_empty)).drop("_pmax")
 
 
-def expected_f05_select(pairs: pl.DataFrame, miss_rate: float = 0.0) -> pl.DataFrame:
+def expected_f05_select(pairs: pl.DataFrame, miss_rate: float = 0.0, t_empty: float = 0.0) -> pl.DataFrame:
     """Per S1 choose the probability-sorted prefix maximizing expected F0.5.
 
     E[F(prefix k)] ~ 1.25 * sum_top_k(p) / (0.25 * E[n_true] + k); the empty set scores
@@ -35,7 +35,9 @@ def expected_f05_select(pairs: pl.DataFrame, miss_rate: float = 0.0) -> pl.DataF
     best = d.group_by("a_idx").agg(pl.col("_ef").max().alias("_best"), pl.col("_p0").first(),
                                    pl.col("_k").sort_by("_ef", descending=True).first().alias("_kbest"))
     d = d.join(best, on="a_idx")
-    return d.filter((pl.col("_best") > pl.col("_p0")) & (pl.col("_k") <= pl.col("_kbest"))).select(pairs.columns)
+    d = d.with_columns(pl.col("p").max().over("a_idx").alias("_pmax"))
+    return d.filter((pl.col("_best") > pl.col("_p0")) & (pl.col("_k") <= pl.col("_kbest"))
+                    & (pl.col("_pmax") >= t_empty)).select(pairs.columns)
 
 
 def macro_f05(pred: pl.DataFrame, truth_counts: pl.DataFrame, all_a: pl.DataFrame) -> float:

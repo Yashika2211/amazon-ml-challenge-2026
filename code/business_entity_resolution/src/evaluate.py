@@ -8,7 +8,7 @@ import os
 
 import polars as pl
 
-from decide import apply_thresholds, expected_f05_select, grid_search, one_to_one, per_a_scores
+from decide import apply_thresholds, expected_f05_select, grid_search, macro_f05, one_to_one, per_a_scores
 from io_utils import OUT, ROOT, WORK
 from model import truth_pairs
 from prepare import load
@@ -63,17 +63,23 @@ def tune(oof: pl.DataFrame) -> dict:
                                  [round(t_e + d, 3) for d in (-0.05, -0.025, 0, 0.025, 0.05)])
     thr_pred = apply_thresholds(one_to_one(oof), *params2)
     rep_thr = score_report(thr_pred, counts, all_a)
-    ef_pred = expected_f05_select(one_to_one(oof).filter(pl.col("p") >= 0.02))
-    rep_ef = score_report(ef_pred, counts, all_a)
+    base = one_to_one(oof).filter(pl.col("p") >= 0.02)
+    best_ef = (-1, None)
+    for miss in (0.0, 0.02, 0.05):
+        for t_e in (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8):
+            s = macro_f05(expected_f05_select(base, miss, t_e), counts, all_a)
+            if s > best_ef[0]:
+                best_ef = (s, (miss, t_e))
+    rep_ef = score_report(expected_f05_select(base, *best_ef[1]), counts, all_a)
     use_ef = rep_ef["macro_f05"] > rep_thr["macro_f05"]
-    return {"thresholds": params2, "threshold_report": rep_thr, "expected_f_report": rep_ef,
-            "decision": "expected_f05" if use_ef else "thresholds"}
+    return {"thresholds": params2, "ef_params": best_ef[1], "threshold_report": rep_thr,
+            "expected_f_report": rep_ef, "decision": "expected_f05" if use_ef else "thresholds"}
 
 
 def decide(pred: pl.DataFrame, cfg: dict) -> pl.DataFrame:
     base = one_to_one(pred)
     if cfg["decision"] == "expected_f05":
-        return expected_f05_select(base.filter(pl.col("p") >= 0.02))
+        return expected_f05_select(base.filter(pl.col("p") >= 0.02), *cfg.get("ef_params", (0.0, 0.0)))
     return apply_thresholds(base, *cfg["thresholds"])
 
 
@@ -85,7 +91,8 @@ def log_experiment(title: str, notes: str, blocking: dict, cfg: dict) -> None:
                     "(GroupKFold by S1), precision/recall, by country and singleton status.\n\n")
         f.write(f"## {title} ({datetime.date.today()})\n\n{notes}\n\n")
         f.write("**Blocking:** " + ", ".join(f"{k}={v}" for k, v in blocking.items()) + "\n\n")
-        f.write(f"**Decision:** {cfg['decision']}, thresholds (t_abs, r, t_empty) = {cfg['thresholds']}\n\n")
+        f.write(f"**Decision:** {cfg['decision']}, thresholds (t_abs, r, t_empty) = {cfg['thresholds']}, "
+                f"expected-F (miss_rate, t_empty) = {cfg.get('ef_params')}\n\n")
         for name in ("threshold_report", "expected_f_report"):
             f.write(f"- {name}: " + ", ".join(f"{k}={v}" for k, v in cfg[name].items()) + "\n")
         f.write("\n")

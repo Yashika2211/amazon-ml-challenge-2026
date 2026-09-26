@@ -227,6 +227,18 @@ def pair_features(pairs: pl.DataFrame, SA: pl.DataFrame, SB: pl.DataFrame, rec: 
             e1 |= digit_edit1(va_[:, i], vb_[:, j])
     f["num_edit1"] = e1.astype(np.float32)
     f["num_first_edit1"] = digit_edit1(va_[:, 0], vb_[:, 0]).astype(np.float32)
+    # size of house-number shift: distractors are copies at a nearby but different number
+    both0 = (va_[:, 0] >= 0) & (vb_[:, 0] >= 0)
+    d0 = np.abs(va_[:, 0] - vb_[:, 0]).astype(np.float64)
+    f["num_first_logdiff"] = np.where(both0, np.log1p(d0), -1).astype(np.float32)
+    f["num_first_reldiff"] = np.where(both0, d0 / np.maximum(np.maximum(va_[:, 0], vb_[:, 0]), 1), -1).astype(np.float32)
+    mind = np.full(len(ai), np.inf)
+    for i in range(3):
+        for j in range(3):
+            ok = (va_[:, i] >= 0) & (vb_[:, j] >= 0)
+            mind = np.where(ok, np.minimum(mind, np.abs(va_[:, i] - vb_[:, j])), mind)
+    f["num_min_logdiff"] = np.where(np.isfinite(mind), np.log1p(np.where(np.isfinite(mind), mind, 0)), -1).astype(np.float32)
+    f["num_near_shift"] = (np.isfinite(mind) & (mind > 0) & (mind <= 50) & ~e1).astype(np.float32)
     f["corefreq_a"] = np.log1p(rec["A_corefreq"][ai]).astype(np.float32)
     f["corefreq_b"] = np.log1p(rec["B_corefreq"][bi]).astype(np.float32)
     out = pairs.select("a_idx", "b_idx").with_columns([pl.Series(k, np.asarray(v, np.float32)) for k, v in f.items()])

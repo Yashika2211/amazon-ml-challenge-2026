@@ -125,8 +125,8 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
 # ---------------------------------------------------------------------------
 # cheap ranking + pruning (numeric only: padded token-id arrays, no string conversion)
 # ---------------------------------------------------------------------------
-K_A = 15
-K_B = 3
+K_A = 25
+K_B = 5
 PRE_CUT = 150
 
 
@@ -150,7 +150,7 @@ def cheap_score(pairs: pl.DataFrame, rec: dict) -> pl.DataFrame:
     _, a_jac = _wov(rec["A_at"][ai], rec["B_at"][bi], rec["at_idf"])
     na, nb = rec["A_num"][ai], rec["B_num"][bi]
     num = ((na[:, :, None] == nb[:, None, :]) & (na != 0)[:, :, None]).any(2).any(1)
-    addr = np.where(rec["B_aempty"][bi], 0.3, a_jac + 0.2 * num)
+    addr = np.where(rec["B_aempty"][bi], 0.6, a_jac + 0.2 * num)  # empty address: neutral, let the model decide
     hits = pairs.select(pl.sum_horizontal(pl.col("^k_.*$").cast(pl.Float32))).to_series().to_numpy()
     score = name + 0.8 * addr + 0.02 * np.minimum(hits, 5)
     return pairs.with_columns(pl.Series("cheap", score.astype(np.float32)))

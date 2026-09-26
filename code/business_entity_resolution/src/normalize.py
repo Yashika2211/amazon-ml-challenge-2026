@@ -56,6 +56,10 @@ def normalize_names(df: pl.DataFrame, indic_map: dict | None = None) -> pl.DataF
          .str.replace(r"^(https?://)?(www\.)?", "")
          .str.replace(r"\.(com|co\.in|in|net|org|co|fr|us|biz|info)$", "")
          .str.replace_all(r"[&+]", " and ")
+         .str.replace_all(r"\bp\s*\.?\s*l\s*\.?\s*l\s*\.?\s*c\b\.?", " pllc ")
+         .str.replace_all(r"\bl\s*\.?\s*l\s*\.?\s*c\b\.?", " llc ")
+         .str.replace_all(r"\bl\s*\.?\s*l\s*\.?\s*p\b\.?", " llp ")
+         .str.replace_all(r"\bp\s*\.\s*c\b\.?", " pc ")
     )
     d = d.with_columns(n.str.extract_groups(DBA_RE).alias("g"))
     d = d.with_columns(

@@ -101,8 +101,7 @@ def normalize_names(df: pl.DataFrame, indic_map: dict | None = None) -> pl.DataF
     return d.select("name_tok", "core_tok", "alt_tok", "name_norm", "core", "compact", "legal", "native")
 
 
-def normalize_addresses(df: pl.DataFrame, comp_alias: dict | None = None,
-                        tok_alias: dict | None = None) -> pl.DataFrame:
+def normalize_addresses(df: pl.DataFrame, comp_alias: dict | None = None) -> pl.DataFrame:
     folded = _ascii_fold(df["business_address"]).str.to_lowercase()
     d = pl.DataFrame({"a": folded})
     a = pl.col("a")
@@ -120,8 +119,6 @@ def normalize_addresses(df: pl.DataFrame, comp_alias: dict | None = None,
         d = d.with_columns(pl.col("addr_comp").list.eval(pl.element().replace(comp_alias)))
     d = d.with_columns(pl.col("addr_comp").list.unique(maintain_order=True))
     tok = pl.col("addr_comp").list.join(" ").str.split(" ").list.eval(pl.element().filter(pl.element() != ""))
-    if tok_alias:
-        tok = tok.list.eval(pl.element().replace(tok_alias))
     d = d.with_columns(tok.list.unique(maintain_order=True).alias("addr_tok"))
     d = d.with_columns(
         pl.col("a").str.extract_all(r"\d+").list.eval(pl.element().str.strip_chars_start("0"))
@@ -133,7 +130,12 @@ def normalize_addresses(df: pl.DataFrame, comp_alias: dict | None = None,
 
 
 def normalize(df: pl.DataFrame, maps: dict | None = None) -> pl.DataFrame:
+    """Normalize a frame; component aliases are applied per country (unknown country: none)."""
     maps = maps or {}
-    names = normalize_names(df, maps.get("indic"))
-    addrs = normalize_addresses(df, maps.get("comp_alias"), maps.get("tok_alias"))
-    return pl.concat([df.select("entity_id", "country"), names, addrs], how="horizontal")
+    parts = []
+    for country, part in df.group_by("country", maintain_order=True):
+        country = country[0]
+        names = normalize_names(part, maps.get("indic"))
+        addrs = normalize_addresses(part, (maps.get("comp_alias") or {}).get(country))
+        parts.append(pl.concat([part.select("entity_id", "country"), names, addrs], how="horizontal"))
+    return pl.concat(parts)

@@ -96,7 +96,8 @@ def mine_components(pos: pl.DataFrame, s1: pl.DataFrame, min_count: int = 20) ->
         sim = JaroWinkler.normalized_similarity(skeleton(b_c.replace(" ", "")), skeleton(a_c.replace(" ", "")))
         # spelling variant / transliteration of the same place, or a state-code style alias
         # (same initial, very frequent canonical form, consistent replacement)
-        if sim >= 0.8 or (b_c[0] == a_c[0] and n >= 100 and n / t >= 0.6 and fa >= 2000):
+        code_like = min(len(b_c), len(a_c)) <= 3 and max(len(b_c.split()), len(a_c.split())) <= 2
+        if sim >= 0.8 or (code_like and b_c[0] == a_c[0] and n >= 300 and n / t >= 0.6 and fa >= 2000):
             alias[b_c] = a_c
     for k in list(alias):  # resolve chains a->b->c
         seen = {k}
@@ -124,8 +125,11 @@ def main() -> dict:
     print("positives", pos.height)
     indic = mine_indic(pos)
     print("indic map", len(indic), list(indic.items())[:30])
-    comp = mine_components(pos, first[1])
-    print("component aliases", len(comp), list(comp.items())[:40])
+    # component aliases are mined and applied per country ("tn" is Tennessee in the US, Tamil Nadu in India)
+    comp = {}
+    for c in pos["a_country"].unique().to_list():
+        comp[c] = mine_components(pos.filter(pl.col("a_country") == c), first[1].filter(pl.col("country") == c))
+        print("component aliases", c, len(comp[c]), list(comp[c].items())[:25])
     # generic tokens must be measured after indic mapping, otherwise transliterations look like insertions
     first = {s: normalize(load_source("train", s), {"indic": indic}) for s in (1, 2, 3)}
     pos = _positive_frame(first)

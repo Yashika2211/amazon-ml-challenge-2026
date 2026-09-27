@@ -41,11 +41,14 @@ def feat_files(split: str) -> list:
     return sorted(glob.glob(os.path.join(WORK, f"feat_{split}_*.parquet")))
 
 
+EXCLUDE: set = set()  # features left out of the model (e.g. density-sensitive context)
+
+
 def feature_names(split: str = "train", extra=None) -> list:
     cols = list(pl.read_parquet_schema(feat_files(split)[0]))
     if extra is not None:
         cols += list(pl.read_parquet_schema(extra)) if isinstance(extra, str) else list(extra.columns)
-    return [c for c in dict.fromkeys(cols) if c not in ID_COLS]
+    return [c for c in dict.fromkeys(cols) if c not in ID_COLS and c not in EXCLUDE]
 
 
 def _read(f: str, extra, filt=None) -> pl.DataFrame:

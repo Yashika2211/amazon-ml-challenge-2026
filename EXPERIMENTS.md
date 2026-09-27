@@ -57,3 +57,10 @@ Same candidates/features as v3; France aliases re-mined from raw components; Fra
 - threshold_report: macro_f05=0.98709, f05_India=0.98581, f05_US=0.98794, f05_singleton=0.98793, f05_nonsingleton=0.98704, micro_precision=0.99744, micro_recall=0.96746, pred_empty_rate=0.0578
 - expected_f_report: macro_f05=0.98713, f05_India=0.98586, f05_US=0.98798, f05_singleton=0.98793, f05_nonsingleton=0.98708, micro_precision=0.99776, micro_recall=0.96665, pred_empty_rate=0.0578
 
+## Findings log (2026-09-27)
+
+- **Leaderboard calibration.** The first public leaderboard upload (cycle 3/3b file) scored **0.980665**. The label-free expected-F0.5 estimate on test for the same predictions was 0.979-0.980, so the estimator tracks the leaderboard closely. It estimates France at 0.957-0.966 and US/India at about 0.983, which explains most of the gap to train OOF (0.9871).
+- **Leave-one-country-out (train US, score India with real labels), round-1 features:** plain 0.9631. Adding unseen-country generic weights from S2/S3-vs-S1 token over-representation scored 0.9283, so those weights were **rejected** and disabled (`mine_pseudo(country_generic=False)`). Cycle 3c = cycle 3b without them: test estimate 0.9791 -> 0.9805 (France 0.957 -> 0.967).
+- **Test is denser than train.** Test has 5.75 S2/S3 records per S1 vs 4.68, and about twice as many near-duplicate records at a house number shifted by at most 20 (0.47 vs 0.26 per S1). Uncertain candidates per S1 (0.1 < p < 0.9): train OOF India 0.20 / US 0.22; test India 0.27 / US 0.33 / France 0.72.
+- **France.** Category-word swaps at the same address ("sportive" vs "primaire") are not over-represented in S2/S3 (ratio about 0.85, baseline 0.89), unlike inserted noise words ("international" 30x, "participations", "associes", "developpement"). France S1 contains many same-number, same-city entities on different streets.
+

@@ -43,9 +43,10 @@ def main() -> None:
     ap.add_argument("--no-stack", action="store_true")
     ap.add_argument("--title", default="run")
     ap.add_argument("--notes", default="")
+    ap.add_argument("--final", default=None, choices=["m1", "m2", "m3"], help="round used for tune/submit")
     args = ap.parse_args()
     todo = STAGES[STAGES.index(args.start): STAGES.index(args.stop) + 1]
-    final = "m1" if args.no_stack else "m3"
+    final = args.final or ("m1" if args.no_stack else "m3")
     t0 = time.time()
     if "mine" in todo:
         mine.main()

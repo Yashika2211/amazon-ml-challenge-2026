@@ -165,7 +165,19 @@ def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50) -> dict:
     if not unseen:
         return maps
     A = A.filter(pl.col("country").is_in(unseen))
-    B = load("test", "B").select(pl.col("idx").alias("b_idx"), "core_tok", "addr_comp")
+    B = load("test", "B").select(pl.col("idx").alias("b_idx"), "entity_id", "country", "core_tok", "addr_comp")
+    B = B.filter(pl.col("country").is_in(unseen))
+    # address components re-derived from the raw files WITHOUT any alias for these countries, so the
+    # mining is independent of aliases that an earlier pseudo pass may already have applied
+    from io_utils import load_source
+    from normalize import normalize_addresses
+    raw1 = load_source("test", 1).filter(pl.col("country").is_in(unseen))
+    raw23 = pl.concat([load_source("test", s_) for s_ in (2, 3)]).filter(pl.col("country").is_in(unseen))
+    ra = raw1.select("entity_id").with_columns(normalize_addresses(raw1, None)["addr_comp"])
+    rb = raw23.select("entity_id").with_columns(normalize_addresses(raw23, None)["addr_comp"])
+    A = (load("test", "A").select(pl.col("idx").alias("a_idx"), "entity_id").join(ra, on="entity_id")
+         .join(A.drop("addr_comp"), on="a_idx"))
+    B = B.drop("addr_comp").join(rb, on="entity_id").select("b_idx", "core_tok", "addr_comp")
     pred = pl.read_parquet(pred_path, columns=["a_idx", "b_idx", "p"]).join(A.select("a_idx", "country"), on="a_idx")
     cols = ["a_idx", "b_idx", "num_first_eq", "at_wjac", "nt_wov", "rank_b"]
     feats = pl.concat([pl.read_parquet(f, columns=cols) for f in sorted(glob.glob(os.path.join(WORK, "feat_test_*.parquet")))])

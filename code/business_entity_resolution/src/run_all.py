@@ -83,7 +83,7 @@ def main() -> None:
         # then redo test inference with the extended maps (models are unchanged)
         maps = mine.load_maps()
         before = set(maps["comp_alias"])
-        maps = mine.mine_pseudo(os.path.join(WORK, f"{final}_test.parquet"), maps)
+        maps = mine.mine_pseudo(os.path.join(WORK, f"{'m1' if args.no_stack else 'm2'}_test.parquet"), maps)
         if set(maps["comp_alias"]) != before:
             prepare.prepare("test", maps)
             p = os.path.join(WORK, "rec_test.npz")

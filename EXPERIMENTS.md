@@ -35,3 +35,14 @@ Same candidates/features as v2; round-2 adds own vs strongest-competitor confide
 - threshold_report: macro_f05=0.98463, f05_India=0.98248, f05_US=0.98606, f05_singleton=0.98606, f05_nonsingleton=0.98454, micro_precision=0.99743, micro_recall=0.95985, pred_empty_rate=0.0581
 - expected_f_report: macro_f05=0.98467, f05_India=0.98255, f05_US=0.98609, f05_singleton=0.98771, f05_nonsingleton=0.98449, micro_precision=0.99783, micro_recall=0.9589, pred_empty_rate=0.0583
 
+## v3: alias-marker fix, learned blocker K=25/kb=5, numba kernels, French pseudo-maps, larger LightGBM [m2] (2026-09-27)
+
+FKA/formerly/nee/DBA: alias splitting (~70k train S3 names); French legal forms and abbreviations; learned LightGBM blocking ranker; top-25 per S1 + top-5 per record; competitor-branch round-2 features; pseudo-positive mining of France address aliases and noise tokens; num_leaves 255, lr 0.06, 20% sample.
+
+**Blocking:** pairs=75089429, pairs_per_s1=34.03, pair_recall=0.98884, pair_recall_India=0.9866, pair_recall_US=0.99033, reduction_ratio=0.9999967
+
+**Decision:** expected_f05, thresholds (t_abs, r, t_empty) = (0.0, 0.7, 0.5), expected-F (miss_rate, t_empty) = (0.0, 0.5)
+
+- threshold_report: macro_f05=0.98707, f05_India=0.98577, f05_US=0.98793, f05_singleton=0.98712, f05_nonsingleton=0.98706, micro_precision=0.99741, micro_recall=0.96742, pred_empty_rate=0.0577
+- expected_f_report: macro_f05=0.9871, f05_India=0.98582, f05_US=0.98796, f05_singleton=0.98712, f05_nonsingleton=0.9871, micro_precision=0.99773, micro_recall=0.96658, pred_empty_rate=0.0577
+

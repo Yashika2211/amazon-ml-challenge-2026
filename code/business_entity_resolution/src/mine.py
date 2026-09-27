@@ -150,7 +150,7 @@ def main() -> dict:
     return maps
 
 
-def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50) -> dict:
+def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50, country_generic: bool = False) -> dict:
     """Alias / generic-token mining for countries with no training data, from test pseudo-positives.
 
     Pseudo-positive: one-to-one best pair for a record with (p >= 0.9) or (address anchored:
@@ -213,7 +213,8 @@ def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50) -> dict:
         gc = {**{k: v for k, v in maps["generic"].items()}}
         for k, v in list(g.items()) + list(ov.items()):
             gc[k] = max(gc.get(k, 0.0), v)
-        maps["generic_by_country"][c] = gc
+        if country_generic:  # off: leave-one-country-out (US -> India) showed these weights hurt (0.963 -> 0.928)
+            maps["generic_by_country"][c] = gc
         new = sorted(((k, v) for k, v in gc.items() if maps["generic"].get(k, 0) < v), key=lambda kv: -kv[1])
         print(f"[pseudo] {c}: {pc.height:,} pseudo-positives, aliases {maps['comp_alias'][c]}", flush=True)
         print(f"[pseudo] {c}: base over-representation {base:.3f}; raised generic tokens {len(new)}: {new[:40]}", flush=True)

@@ -64,7 +64,7 @@ def featurize(split: str, A: pl.DataFrame, B: pl.DataFrame, rec: dict) -> None:
 
 def run_split(split: str, steps=("cand", "feat")) -> None:
     A, B = load(split, "A"), load(split, "B")
-    rec = build_records(split, A, B, load_maps()["generic"])
+    rec = build_records(split, A, B, load_maps()["generic"], load_maps().get("generic_by_country"))
     if "cand" in steps:
         candidates(split, A, B, rec)
         if split == "train":

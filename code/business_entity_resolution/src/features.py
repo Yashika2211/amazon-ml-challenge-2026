@@ -41,7 +41,7 @@ def _ids(df: pl.DataFrame, col: str, vocab: pl.DataFrame, width: int) -> np.ndar
     return out
 
 
-def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -> dict:
+def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict, generic_by_country: dict | None = None) -> dict:
     """Arrays indexed by global idx for both sides. Cached as npz."""
     path = os.path.join(WORK, f"rec_{split}.npz")
     if os.path.exists(path):
@@ -64,6 +64,14 @@ def build_records(split: str, A: pl.DataFrame, B: pl.DataFrame, generic: dict) -
             gm = v.select("id", "t").join(pl.DataFrame({"t": list(generic), "g": list(generic.values())}), on="t")
             g[gm["id"].to_numpy()] = gm["g"].to_numpy()
             rec["nt_gen"] = g
+            # country-specific generic rates for countries without training data (e.g. France)
+            for ci, (cname, gdict) in enumerate(sorted((generic_by_country or {}).items())):
+                gc = np.zeros(len(v), np.float32)
+                gm = v.select("id", "t").join(pl.DataFrame({"t": list(gdict), "g": list(gdict.values())}), on="t")
+                gc[gm["id"].to_numpy()] = gm["g"].to_numpy()
+                rec["nt_gen_c"] = gc  # one unseen country supported; the last one wins
+                rec["A_genc"] = (A["country"] == cname).to_numpy()
+                rec["B_genc"] = (B["country"] == cname).to_numpy()
         vocab = v.select("t", "id")
         for side, df in (("A", A), ("B", B)):
             ids = _ids(df, col, vocab, width)
@@ -209,7 +217,13 @@ def pair_features(pairs: pl.DataFrame, SA: pl.DataFrame, SB: pl.DataFrame, rec: 
     f["native_b"] = SB["native"].gather(bi).to_numpy().astype(np.float32)
     f["aempty_b"] = SB["addr_empty"].gather(bi).to_numpy().astype(np.float32)
     ra, rb = pairs["a_idx"].to_numpy(), pairs["b_idx"].to_numpy()
-    f.update(_set_feats(rec, "nt", ai, bi, rec["nt_idf"], rec["nt_df"], rec["nt_gen"], "nt_"))
+    fn = _set_feats(rec, "nt", ai, bi, rec["nt_idf"], rec["nt_df"], rec["nt_gen"], "nt_")
+    if "nt_gen_c" in rec:
+        sel = rec["A_genc"][ai]
+        if sel.any():
+            fc = _set_feats(rec, "nt", ai, bi, rec["nt_idf"], rec["nt_df"], rec["nt_gen_c"], "nt_")
+            fn = {k: np.where(sel, fc[k], v) for k, v in fn.items()}
+    f.update(fn)
     f.update(_set_feats(rec, "at", ai, bi, rec["at_idf"], rec["at_df"], None, "at_"))
     f.update(_set_feats(rec, "ac", ai, bi, rec["ac_idf"], None, None, "ac_"))
     na, nb = rec["A_num"][ai], rec["B_num"][bi]

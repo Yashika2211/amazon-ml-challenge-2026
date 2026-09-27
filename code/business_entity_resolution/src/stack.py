@@ -122,6 +122,6 @@ def build(split: str, tag: str) -> str:
     src = os.path.join(WORK, f"{tag}_oof.parquet" if split == "train" else f"{tag}_test.parquet")
     p1 = pl.read_parquet(src, columns=["a_idx", "b_idx", "p"])
     cf = cluster_features(split, p1)
-    path = os.path.join(WORK, f"cluster_{split}.parquet")
+    path = os.path.join(WORK, f"cluster_{split}_{tag}.parquet")
     cf.write_parquet(path)
     return path

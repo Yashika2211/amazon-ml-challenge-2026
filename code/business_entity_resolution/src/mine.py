@@ -176,22 +176,35 @@ def mine_pseudo(pred_path: str, maps: dict, min_occ: int = 50) -> dict:
     pos = (d.select("a_idx", "b_idx", pl.col("country").alias("a_country"))
              .join(A.select("a_idx", pl.col("core_tok").alias("a_core_tok"), pl.col("addr_comp").alias("a_addr_comp")), on="a_idx")
              .join(B.select("b_idx", pl.col("core_tok").alias("b_core_tok"), pl.col("addr_comp").alias("b_addr_comp")), on="b_idx"))
-    # only tokens that are rare in TRAIN may get a new generic rate, so US/India features stay
-    # exactly as the model saw them in training
-    tr_tok = (load("train", "B").select(pl.col("core_tok").explode().alias("t")).drop_nulls()
-                .group_by("t").len().filter(pl.col("len") >= min_occ)["t"])
-    common_in_train = set(tr_tok.to_list())
-    extra_generic = {}
+    # country-specific generic rates (applied only to pairs of that country, so US/India features
+    # stay exactly as in training). Two label-free estimates, take the max:
+    #   * insertion rate in pseudo-positives
+    #   * over-representation in S2/S3 vs S1: a token seen e times more often than the S1 base
+    #     rate implies an insertion share of 1 - 1/e among its S2/S3 occurrences
+    Afull = load("test", "A").select("country", "core_tok")
+    Bfull = load("test", "B").select("country", "core_tok")
+    maps.setdefault("generic_by_country", {})
     for c in unseen:
         pc = pos.filter(pl.col("a_country") == c)
         s1c = A.filter(pl.col("country") == c)
         maps["comp_alias"][c] = mine_components(pc, s1c, region_rule=True)
         g = mine_generic(pc, None, min_occ)
-        extra_generic.update({k: v for k, v in g.items() if k not in maps["generic"] and k not in common_in_train})
+        a_c = Afull.filter(pl.col("country") == c)
+        b_c = Bfull.filter(pl.col("country") == c)
+        fa = a_c.select(pl.col("core_tok").list.unique().explode().alias("t")).drop_nulls().group_by("t").len().rename({"len": "na"})
+        fb = b_c.select(pl.col("core_tok").list.unique().explode().alias("t")).drop_nulls().group_by("t").len().rename({"len": "nb"})
+        r = (fb.join(fa, on="t", how="left").with_columns(pl.col("na").fill_null(0))
+               .with_columns(((pl.col("nb") / b_c.height) / ((pl.col("na") + 1) / a_c.height)).alias("r")))
+        base = r.filter(pl.col("na") >= min_occ)["r"].median()
+        r = r.filter(pl.col("nb") >= min_occ).with_columns((1 - base / pl.col("r")).clip(0, 1).alias("ov"))
+        ov = {t: round(v, 3) for t, v in zip(r["t"].to_list(), r["ov"].to_list()) if v >= 0.2}
+        gc = {**{k: v for k, v in maps["generic"].items()}}
+        for k, v in list(g.items()) + list(ov.items()):
+            gc[k] = max(gc.get(k, 0.0), v)
+        maps["generic_by_country"][c] = gc
+        new = sorted(((k, v) for k, v in gc.items() if maps["generic"].get(k, 0) < v), key=lambda kv: -kv[1])
         print(f"[pseudo] {c}: {pc.height:,} pseudo-positives, aliases {maps['comp_alias'][c]}", flush=True)
-    top = sorted(extra_generic.items(), key=lambda kv: -kv[1])[:40]
-    print(f"[pseudo] new generic tokens {len(extra_generic)}: {top}", flush=True)
-    maps["generic"].update(extra_generic)
+        print(f"[pseudo] {c}: base over-representation {base:.3f}; raised generic tokens {len(new)}: {new[:40]}", flush=True)
     maps["pseudo_countries"] = unseen
     with open(os.path.join(WORK, "maps.json"), "w") as f:
         json.dump(maps, f)

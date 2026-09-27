@@ -114,6 +114,8 @@ Pipeline (one command, `src/run_all.py`):
   - Copies whose name and address are both heavily mutated (truncated name plus dropped house number).
   - Blocking misses (about 1% of pairs), mostly common names whose keys exceed the block caps.
 
+**Final submission:** the cycle 3b configuration (learned blocker with top 25 per S1 plus top 5 per record, about 36 candidates per S1 on test; three LightGBM rounds; France country-specific noise weights; train OOF 0.98713), which scored **0.9807** on the public leaderboard, the best of all uploads. The v4 variant with 18.8 candidates per S1 had a higher train OOF (0.98741) but scored 0.978 on the denser test, so the wider cut was kept.
+
 **Leaderboard checks (public subset):** cycle 3 with France country-specific noise weights 0.9807; the same without them 0.9760; the latter with more permissive shifted-number matches 0.9730. The France weights stay on, and the decoy correction goes in the conservative direction. Train OOF overstates the test score because test is denser in decoys (uncertain candidates per S1: train 0.20-0.22, test 0.27-0.33 for India/US, 0.72 for France).
 
 **Loss decomposition (v2, OOF):** blocking misses 0.0066, rejected true candidates 0.0069, wrong matches 0.0022. Measured by adding back or removing each error type.

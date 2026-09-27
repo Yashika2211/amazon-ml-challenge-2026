@@ -142,8 +142,8 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
 # ---------------------------------------------------------------------------
 # cheap ranking + pruning (numeric only: padded token-id arrays, no string conversion)
 # ---------------------------------------------------------------------------
-K_A = 12
-K_B = 3
+K_A = 25
+K_B = 5
 PRE_CUT = 80
 
 

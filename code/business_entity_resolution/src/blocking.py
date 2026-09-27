@@ -144,7 +144,7 @@ def block_country(a: pl.DataFrame, b: pl.DataFrame, rec: dict, chunk: int = 100_
 # ---------------------------------------------------------------------------
 K_A = 25
 K_B = 5
-PRE_CUT = 150
+PRE_CUT = 80
 
 
 def _wov(rec: dict, key: str, ai: np.ndarray, bi: np.ndarray, idf: np.ndarray):

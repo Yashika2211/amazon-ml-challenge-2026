@@ -63,8 +63,14 @@ def available() -> bool:
     return os.path.exists(MODEL)
 
 
-def train(A: pl.DataFrame, B: pl.DataFrame, rec: dict, truth: pl.DataFrame, sample_mod: int = 10) -> None:
-    """Collect un-pruned pairs for 1/sample_mod of S1, fit the ranker, report recall@K."""
+def train(A: pl.DataFrame, B: pl.DataFrame, rec: dict, truth: pl.DataFrame, sample_mod: int = 10,
+          neg_keep: float = 0.25) -> None:
+    """Collect un-pruned pairs for 1/sample_mod of S1, fit the ranker, report recall@K.
+
+    Training groups keep all positives and `neg_keep` of negatives (ranking is invariant to the
+    resulting constant log-odds shift); validation groups are kept complete for honest recall@K.
+    """
+    rng = np.random.default_rng(0)
     t0 = time.time()
     tp = truth.select("a_idx", "b_idx").with_columns(pl.lit(1, pl.Int8).alias("y"))
     Xs, ys, gs = [], [], []
@@ -74,9 +80,14 @@ def train(A: pl.DataFrame, B: pl.DataFrame, rec: dict, truth: pl.DataFrame, samp
         raw = raw.join(tp, on=["a_idx", "b_idx"], how="left").with_columns(pl.col("y").fill_null(0))
         n_true = truth.filter((pl.col("country") == c) & (pl.col("a_idx") % sample_mod == 0)).height
         print(f"[blocker] {c}: raw pairs {raw.height:,}, key-union recall {raw['y'].sum() / n_true:.5f}", flush=True)
+        hold = ((raw["a_idx"].to_numpy() // sample_mod) % 5) == 0
+        keep = (raw["y"].to_numpy() == 1) | hold | (rng.random(raw.height) < neg_keep)
+        raw = raw.filter(pl.Series(keep))
+        del hold, keep
         for s in range(0, raw.height, 5_000_000):
             ch = raw.slice(s, 5_000_000)
             Xs.append(raw_features(ch, rec)); ys.append(ch["y"].to_numpy()); gs.append(ch["a_idx"].to_numpy())
+        del raw
     X, y, g = np.vstack(Xs), np.concatenate(ys), np.concatenate(gs)
     del Xs, ys, gs
     va = (g // sample_mod) % 5 == 0

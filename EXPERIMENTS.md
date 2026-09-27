@@ -46,3 +46,14 @@ FKA/formerly/nee/DBA: alias splitting (~70k train S3 names); French legal forms 
 - threshold_report: macro_f05=0.98707, f05_India=0.98577, f05_US=0.98793, f05_singleton=0.98712, f05_nonsingleton=0.98706, micro_precision=0.99741, micro_recall=0.96742, pred_empty_rate=0.0577
 - expected_f_report: macro_f05=0.9871, f05_India=0.98582, f05_US=0.98796, f05_singleton=0.98712, f05_nonsingleton=0.9871, micro_precision=0.99773, micro_recall=0.96658, pred_empty_rate=0.0577
 
+## v3b: France country-specific noise weights, round-3 stacking [m3] (2026-09-27)
+
+Same candidates/features as v3; France aliases re-mined from raw components; France generic rates from over-representation and pseudo-positives (France pairs only); round 3 recomputes cluster/competitor features from round-2 probabilities.
+
+**Blocking:** pairs=75089429, pairs_per_s1=34.03, pair_recall=0.98884, pair_recall_India=0.9866, pair_recall_US=0.99033, reduction_ratio=0.9999967
+
+**Decision:** expected_f05, thresholds (t_abs, r, t_empty) = (0.0, 0.7, 0.5), expected-F (miss_rate, t_empty) = (0.02, 0.5)
+
+- threshold_report: macro_f05=0.98709, f05_India=0.98581, f05_US=0.98794, f05_singleton=0.98793, f05_nonsingleton=0.98704, micro_precision=0.99744, micro_recall=0.96746, pred_empty_rate=0.0578
+- expected_f_report: macro_f05=0.98713, f05_India=0.98586, f05_US=0.98798, f05_singleton=0.98793, f05_nonsingleton=0.98708, micro_precision=0.99776, micro_recall=0.96665, pred_empty_rate=0.0578
+

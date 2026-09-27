@@ -8,7 +8,8 @@ Stages: mine, prepare, blocker, train_data, test_data, fit, oof, test, stack, tu
   stack         round-2 (tag m2) on round-1 features + cluster features from m1 probabilities
   pseudo        unseen countries (France): mine aliases + noise tokens from test pseudo-positives, redo test
   stack2        round-3 (tag m3): cluster features recomputed from m2 probabilities
-  tune/submit   use m3 when stacking is on, else m1
+  tune/submit   use m3 when stacking is on, else m1 (override with --final); submit applies the
+                label-free prior-shift correction for test decoy density (src/shift.py) unless --no-shift
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ def main() -> None:
     ap.add_argument("--no-stack", action="store_true")
     ap.add_argument("--title", default="run")
     ap.add_argument("--notes", default="")
+    ap.add_argument("--no-shift", action="store_true", help="skip the test prior-shift correction")
     ap.add_argument("--final", default=None, choices=["m1", "m2", "m3"], help="round used for tune/submit")
     args = ap.parse_args()
     todo = STAGES[STAGES.index(args.start): STAGES.index(args.stop) + 1]
@@ -114,6 +116,10 @@ def main() -> None:
             with open(os.path.join(WORK, f"{final}_decision.json")) as f:
                 cfg = json.load(f)
         pred = pl.read_parquet(os.path.join(WORK, f"{final}_test.parquet"))
+        if not args.no_shift:
+            import shift
+            pred = shift.apply(pred)
+            pred.write_parquet(os.path.join(WORK, f"{final}_test_shifted.parquet"))
         evaluate.write_submission(pred, cfg)
     print(f"done in {(time.time() - t0) / 60:.1f} min", flush=True)
 

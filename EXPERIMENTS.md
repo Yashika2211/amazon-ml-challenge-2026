@@ -64,3 +64,14 @@ Same candidates/features as v3; France aliases re-mined from raw components; Fra
 - **Test is denser than train.** Test has 5.75 S2/S3 records per S1 vs 4.68, and about twice as many near-duplicate records at a house number shifted by at most 20 (0.47 vs 0.26 per S1). Uncertain candidates per S1 (0.1 < p < 0.9): train OOF India 0.20 / US 0.22; test India 0.27 / US 0.33 / France 0.72.
 - **France.** Category-word swaps at the same address ("sportive" vs "primaire") are not over-represented in S2/S3 (ratio about 0.85, baseline 0.89), unlike inserted noise words ("international" 30x, "participations", "associes", "developpement"). France S1 contains many same-number, same-city entities on different streets.
 
+## v4: top-12/top-3 candidates, France weights on, 30% sample [m2] (2026-09-27)
+
+Round 2 final.
+
+**Blocking:** pairs=41397191, pairs_per_s1=18.76, pair_recall=0.98792, pair_recall_India=0.98578, pair_recall_US=0.98935, reduction_ratio=0.99999818
+
+**Decision:** expected_f05, thresholds (t_abs, r, t_empty) = (0.0, 0.7, 0.5), expected-F (miss_rate, t_empty) = (0.0, 0.5)
+
+- threshold_report: macro_f05=0.98737, f05_India=0.98616, f05_US=0.98818, f05_singleton=0.98819, f05_nonsingleton=0.98732, micro_precision=0.99756, micro_recall=0.96786, pred_empty_rate=0.0577
+- expected_f_report: macro_f05=0.98741, f05_India=0.9862, f05_US=0.98822, f05_singleton=0.98819, f05_nonsingleton=0.98736, micro_precision=0.9979, micro_recall=0.96697, pred_empty_rate=0.0577
+
